@@ -11,6 +11,11 @@ import plotly.express as px
 from theme import COLORS, LENDER_COLORS, CATEGORY_COLORS, STATUS_COLORS, CHART_LAYOUT
 from scenario_engine import recompute_covenants, run_scenario, recompute_interest
 import rule_based_ai as rba
+from visualizations import (
+    render_covenant_headroom_chart, render_facility_cost_chart,
+    render_lender_composition_stacked, render_repayment_timeline,
+    render_renewal_timeline, render_scenario_comparison_chart,
+)
 
 
 # ─── Helper formatters ──────────────────────────────────────────────────
@@ -146,15 +151,29 @@ Edit the Excel → click Reload → everything updates.
                 Rate {rate_shock:+d}bps · Spread {spread_shock:+d}bps · 
                 EBITDA {ebitda_change:+d}% · Debt {debt_change:+d}%
             </div>""", unsafe_allow_html=True)
-        
-        return {
-            "basis": basis,
-            "rate_shock": rate_shock,
-            "spread_shock": spread_shock,
-            "ebitda_change": ebitda_change,
-            "debt_change": debt_change,
-            "is_stressed": is_stressed,
-        }
+    
+    # Live market rates (collapsed expander outside main controls block)
+    try:
+        from market_rates import render_market_rates_sidebar
+        render_market_rates_sidebar()
+    except Exception:
+        pass
+    
+    # Gemini API key configuration
+    try:
+        from gemini_ai import render_gemini_settings_sidebar
+        render_gemini_settings_sidebar()
+    except Exception:
+        pass
+    
+    return {
+        "basis": basis,
+        "rate_shock": rate_shock,
+        "spread_shock": spread_shock,
+        "ebitda_change": ebitda_change,
+        "debt_change": debt_change,
+        "is_stressed": is_stressed,
+    }
 
 
 # ─── Header ──────────────────────────────────────────────────────────────
@@ -315,6 +334,16 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
                 merged[col] = merged[col].apply(lambda x: f"₹{x:,.1f}")
         merged.columns = [c.replace("_", " ") for c in merged.columns]
         st.dataframe(merged, use_container_width=True, hide_index=True)
+    
+    # ─── Lender composition stacked bar ─────────────────────────────
+    render_tab_header("COMPOSITION", "Each Lender's Exposure Mix",
+                       "How each lender's exposure splits across facility categories.")
+    render_lender_composition_stacked(data)
+    
+    # ─── Facility cost ranking ──────────────────────────────────────
+    render_tab_header("COST", "Facility-Level Cost vs Portfolio WAC",
+                       "Bars above the dashed line cost more than the portfolio average.")
+    render_facility_cost_chart(data)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -400,6 +429,11 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
                        yaxis=dict(title="Principal (₹ Cr)", gridcolor="#334155"),
                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18))
     st.plotly_chart(fig, use_container_width=True)
+    
+    # ─── Cumulative TL outstanding running down over time ───────────
+    render_tab_header("RUNDOWN", "Term Loan Outstanding Over Time",
+                       "Total TL outstanding by lender, decreasing as scheduled principal is paid each FY.")
+    render_repayment_timeline(data)
     
     # Upcoming renewals
     render_tab_header("ATTENTION", "Upcoming Renewals (≤90 days)")
@@ -491,6 +525,11 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
     with c2: render_big_kpi("Watch", str(watch), "5–10% buffer", color="#3B82F6")
     with c3: render_big_kpi("Near Breach", str(near), "<5% buffer", color="#F59E0B" if near else "#94A3B8")
     with c4: render_big_kpi("Breach", str(breach), "Action req'd", color="#EF4444" if breach else "#94A3B8")
+    
+    # ─── Headroom bar chart — most informative single chart ─────────
+    render_tab_header("HEADROOM", "All 24 Covenants by Compliance Buffer",
+                       "Bars further right = more compliant. Dashed lines mark Watch and Breach zones.")
+    render_covenant_headroom_chart(cov_df)
     
     # Watch items
     attention = cov_df[cov_df["Status"].isin(["Breach", "Near Breach", "Watch"])]
@@ -692,6 +731,10 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
                               color="#10B981")
     
     # Detailed table per bucket
+    render_tab_header("TIMELINE", "Renewal Calendar (next 12 months)",
+                       "Each bar shows days until expiry. Color reflects urgency.")
+    render_renewal_timeline(data)
+    
     render_tab_header("ACTIONS", "Priority-Ordered Renewal List")
     upcoming = fm[fm["days_to_expiry"].between(-30, 365)].sort_values("days_to_expiry")
     

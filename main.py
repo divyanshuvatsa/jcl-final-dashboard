@@ -1,20 +1,9 @@
 """
 JCL Debt Monitoring Dashboard — Main Entry Point
 ─────────────────────────────────────────────────────────────────────
-A real-time, Excel-driven debt monitoring dashboard for Jindal Coke Limited.
+Real-time, Excel-driven, fully-dynamic debt and covenant monitoring.
 
-Architecture:
-  • Excel (JCL_Debt_Model_Final.xlsx) is the SINGLE SOURCE OF TRUTH
-  • Every number, rate, threshold, schedule is read from the Excel
-  • Edit the Excel → click 'Reload from Excel' → dashboard updates
-  • Upload a new Excel via sidebar → dashboard rebuilds
-
-Data flow:
-  Excel → data_loader.load_all_data() → {dict of all data}
-       → scenario_engine (applies user shocks)
-       → dashboard_ui (renders 7 tabs)
-
-Run: streamlit run main.py
+Excel = single source of truth. Edit Excel → click Reload → updates.
 """
 
 import streamlit as st
@@ -29,8 +18,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        "Get Help": "https://github.com/divyanshuvatsa/jcl-final-dashboard",
-        "Report a bug": "https://github.com/divyanshuvatsa/jcl-final-dashboard/issues",
         "About": "**JCL Debt Monitor** — Real-time, Excel-driven debt and covenant monitoring dashboard.",
     },
 )
@@ -48,6 +35,15 @@ try:
     )
     from lender_heatmap import render_lender_heatmap
     from rate_path_simulator import render_rate_path_simulator
+    from scenario_engine import recompute_covenants
+    
+    # Gemini AI (optional — fails gracefully if package missing)
+    try:
+        from gemini_ai import render_gemini_tab
+        GEMINI_AVAILABLE = True
+    except ImportError:
+        GEMINI_AVAILABLE = False
+        
 except ImportError as e:
     st.error(f"❌ Import error: {e}")
     st.code(traceback.format_exc())
@@ -85,6 +81,12 @@ controls = render_sidebar(data)
 render_header(data)
 
 
+# ─── COMPUTE COVENANTS (used by Gemini tab) ──────────────────────────────
+fin = data["financials"][controls["basis"]]
+cov_df = recompute_covenants(data["covenants"], fin,
+                              controls["ebitda_change"], 0, controls["debt_change"])
+
+
 # ─── TABS ────────────────────────────────────────────────────────────────
 tabs = st.tabs([
     "🏠 Overview",
@@ -94,7 +96,8 @@ tabs = st.tabs([
     "🌡️ Heatmap",
     "📈 Rate Path",
     "📆 Renewals",
-    "🤖 AI Analyst",
+    "🤖 Rule AI",
+    "🧠 Gemini AI",
     "📸 Snapshots",
     "📤 Export",
 ])
@@ -127,15 +130,23 @@ with tabs[7]:
     render_tab_ai(data, controls)
 
 with tabs[8]:
-    render_tab_snapshots(data, controls)
+    if GEMINI_AVAILABLE:
+        render_gemini_tab(data, cov_df)
+    else:
+        st.markdown("### 🧠 Gemini AI Analyst")
+        st.warning("⚠️ google-generativeai package not installed.")
+        st.markdown("Install with: `pip install google-generativeai`")
+        st.markdown("Or wait for Streamlit Cloud deployment (auto-installs from requirements.txt).")
 
 with tabs[9]:
+    render_tab_snapshots(data, controls)
+
+with tabs[10]:
     render_tab_export(data, controls)
 
 
 # ─── FOOTER ──────────────────────────────────────────────────────────────
 st.markdown("""<div style='margin-top:40px;padding:16px;text-align:center;
             border-top:1px solid #334155;color:#64748B;font-size:0.78rem;'>
-    JCL Debt Monitor · Excel-driven · Updated from JCL_Debt_Model_Final.xlsx · 
-    All numbers reconcile to the source workbook
+    JCL Debt Monitor · Excel-driven · All numbers reconcile to JCL_Debt_Model_Final.xlsx
 </div>""", unsafe_allow_html=True)

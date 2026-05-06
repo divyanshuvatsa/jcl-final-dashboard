@@ -53,7 +53,7 @@ FY26E PROJECTED FINANCIALS (Rs. Cr):
 - Total Outside Liabilities (TOL): {fy['TOL']:,.2f}
 - Interest Expense: {fy['Interest Expense']:,.2f}
 - Scheduled TL Repayment: {fy['Sched TL Repay']:,.2f}
-- Tax: {fy['Tax']:,.2f}
+- Tax Paid: {fy['Tax Paid']:,.2f}
 - Fixed Assets: {fy['Fixed Assets']:,.2f}
 
 LENDER CONCENTRATION:
@@ -66,7 +66,7 @@ LENDER CONCENTRATION:
     tl = fm[fm["Category"] == "FB-Term"]
     ctx += "\nTERM LOAN OUTSTANDINGS (Rs. Cr):\n"
     for _, r in tl.iterrows():
-        ctx += f"- {r['Facility']} ({r['Lender']}): Outstanding Rs.{r['Outstanding']:,.2f}, Rate {r['Rate_Display']}\n"
+        ctx += f"- {r['Facility']} ({r['Lender']}): Outstanding Rs.{r['Effective_OS']:,.2f}, Rate {r['Effective_Rate']*100:.2f}%\n"
     
     # Covenant summary
     ctx += f"\nCOVENANT COMPLIANCE ({len(cov_df)} total):\n"

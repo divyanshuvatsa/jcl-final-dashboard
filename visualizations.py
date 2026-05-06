@@ -206,31 +206,42 @@ def render_repayment_timeline(data: Dict[str, Any]):
         st.info("No term loan schedule to plot.")
         return
     
+    # The repayment schedule is in WIDE format: RBL_Principal, YBL_Principal, Bajaj_Principal
+    # Map lender abbreviation to full name
+    lender_cols = {
+        "RBL Bank": "RBL_Principal",
+        "YES Bank": "YBL_Principal",
+        "Bajaj Finance": "Bajaj_Principal",
+    }
+    
     # Compute outstanding by lender at each period
     rep["FY"] = rep["Period_End"].dt.year + (rep["Period_End"].dt.month >= 4).astype(int)
     rep["FY_Label"] = "FY" + rep["FY"].astype(str).str[-2:]
     
-    # Get current outstanding
-    current_os = tl.set_index("Lender")["Outstanding"].to_dict()
+    # Get current outstanding (using Effective_OS — actual column name)
+    current_os = tl.set_index("Lender")["Effective_OS"].to_dict()
     
-    # Compute cumulative repayment per lender per FY
-    by_lender_fy = rep.groupby(["Lender", "FY_Label"])["Total_Principal"].sum().unstack(fill_value=0)
-    
-    # Build outstanding timeline
-    fy_labels = sorted(by_lender_fy.columns,
-                        key=lambda x: int(x.replace("FY", "")))
+    # Build cumulative repayment per lender per FY (using wide-format columns)
+    fy_labels = sorted(rep["FY_Label"].unique(), key=lambda x: int(x.replace("FY", "")))
     
     fig = go.Figure()
     
-    for lender in by_lender_fy.index:
+    for lender, col in lender_cols.items():
+        if col not in rep.columns:
+            continue
         outstanding = current_os.get(lender, 0)
+        if outstanding <= 0:
+            continue
+        
+        # Sum repayments per FY for this lender
+        fy_repay = rep.groupby("FY_Label")[col].sum()
+        
         timeline = [outstanding]
         for fy in fy_labels:
-            outstanding -= by_lender_fy.loc[lender, fy]
+            outstanding -= fy_repay.get(fy, 0)
             outstanding = max(0, outstanding)
             timeline.append(outstanding)
         
-        # X axis = current + each FY
         x = ["Current"] + fy_labels
         
         fig.add_trace(go.Scatter(

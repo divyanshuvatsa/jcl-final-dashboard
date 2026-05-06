@@ -34,7 +34,14 @@ def render_covenant_headroom_chart(cov_df: pd.DataFrame):
         return
     
     df["label"] = df["Lender"] + " — " + df["Covenant"]
-    df = df.sort_values("headroom", ascending=False)  # tightest at bottom
+    df = df.sort_values("headroom", ascending=True)  # tightest at TOP for visibility
+    
+    # Cap extreme values for visual scale (but show actual in label)
+    CAP = 150
+    df["display_value"] = df["headroom"].clip(upper=CAP)
+    df["actual_text"] = df["headroom"].apply(
+        lambda v: f">{CAP}% (actual {v:.0f}%)" if v > CAP else f"{v:+.0f}%"
+    )
     
     # Color by status
     color_map = {
@@ -45,41 +52,75 @@ def render_covenant_headroom_chart(cov_df: pd.DataFrame):
     }
     colors = [color_map.get(s, "#64748B") for s in df["Status"]]
     
-    fig = go.Figure(go.Bar(
-        x=df["headroom"],
+    fig = go.Figure()
+    
+    # Background shaded zones (subtle, behind bars)
+    fig.add_vrect(x0=-100, x1=0, fillcolor="rgba(239,68,68,0.08)",
+                   line_width=0, layer="below")
+    fig.add_vrect(x0=0, x1=20, fillcolor="rgba(245,158,11,0.06)",
+                   line_width=0, layer="below")
+    fig.add_vrect(x0=20, x1=CAP+10, fillcolor="rgba(16,185,129,0.04)",
+                   line_width=0, layer="below")
+    
+    fig.add_trace(go.Bar(
+        x=df["display_value"],
         y=df["label"],
         orientation="h",
-        marker_color=colors,
-        text=[f"{v:+.0f}%" for v in df["headroom"]],
+        marker=dict(color=colors, line=dict(color="#0F172A", width=0.5)),
+        text=df["actual_text"],
         textposition="outside",
-        textfont=dict(size=10, color="#F1F5F9"),
+        textfont=dict(size=11, color="#F1F5F9"),
         hovertemplate=(
             "<b>%{y}</b><br>"
             "Actual: %{customdata[0]:.2f}x<br>"
             "Threshold: %{customdata[1]} %{customdata[2]:.2f}x<br>"
-            "Headroom: %{x:+.1f}%<extra></extra>"
+            "Headroom: %{customdata[3]:+.1f}%<br>"
+            "Status: %{customdata[4]}<extra></extra>"
         ),
-        customdata=df[["Actual", "Operator", "Threshold"]].values,
+        customdata=df[["Actual", "Operator", "Threshold", "headroom", "Status"]].values,
     ))
     
-    fig.add_vline(x=0, line=dict(color="#EF4444", width=2, dash="dash"),
-                   annotation=dict(text="Breach line", font=dict(color="#EF4444")))
-    fig.add_vline(x=20, line=dict(color="#F59E0B", width=1, dash="dot"),
-                   annotation=dict(text="Watch threshold (20% headroom)",
-                                   font=dict(color="#F59E0B"),
-                                   xanchor="left"))
+    # Reference lines (cleaner, no overlapping text)
+    fig.add_vline(x=0, line=dict(color="#EF4444", width=2))
+    fig.add_vline(x=20, line=dict(color="#F59E0B", width=1, dash="dot"))
     
     fig.update_layout(
-        height=max(420, 22 * len(df)),
+        height=max(450, 26 * len(df)),
         plot_bgcolor="#0F172A", paper_bgcolor="#0F172A",
         font=dict(color="#F1F5F9", family="Inter, sans-serif"),
-        xaxis=dict(title="Headroom % (positive = compliant, negative = breach)",
-                   gridcolor="#334155", color="#94A3B8"),
-        yaxis=dict(color="#F1F5F9", autorange="reversed"),
-        margin=dict(l=20, r=80, t=20, b=40),
+        xaxis=dict(
+            title="Headroom % (positive = compliant, negative = breach)",
+            gridcolor="#334155", color="#94A3B8",
+            range=[-10, CAP + 25],
+        ),
+        yaxis=dict(color="#F1F5F9"),
+        margin=dict(l=20, r=120, t=50, b=40),
         showlegend=False,
+        annotations=[
+            dict(x=-5, y=1.04, xref="x", yref="paper",
+                 text="<span style='color:#EF4444'>◀ Breach</span>",
+                 showarrow=False, font=dict(size=11)),
+            dict(x=10, y=1.04, xref="x", yref="paper",
+                 text="<span style='color:#F59E0B'>Watch</span>",
+                 showarrow=False, font=dict(size=11)),
+            dict(x=80, y=1.04, xref="x", yref="paper",
+                 text="<span style='color:#10B981'>Compliant ▶</span>",
+                 showarrow=False, font=dict(size=11)),
+        ],
     )
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Legend below chart
+    st.markdown(
+        "<div style='display:flex;gap:20px;justify-content:center;font-size:0.82rem;"
+        "color:#94A3B8;margin-top:8px;'>"
+        "<span>🟢 Compliant (>20% buffer)</span>"
+        "<span>🔵 Watch (10-20%)</span>"
+        "<span>🟡 Near Breach (<10%)</span>"
+        "<span>🔴 Breach</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -143,13 +184,47 @@ def render_facility_cost_chart(data: Dict[str, Any]):
     st.plotly_chart(fig, use_container_width=True)
 
 
+CATEGORY_LABELS = {
+    "FB": "WC Fund-Based",
+    "FB-Term": "Term Loan",
+    "FB-FCY": "FX Buyer's Credit",
+    "FB-FDbacked": "FD-Backed FB",
+    "NFB": "NFB (LC/SBLC)",
+    "NFB-FDbacked": "NFB FD-Backed",
+    "Hedge": "Hedge",
+}
+CATEGORY_ORDER = ["Term Loan", "WC Fund-Based", "FX Buyer's Credit",
+                   "FD-Backed FB", "NFB (LC/SBLC)", "NFB FD-Backed", "Hedge"]
+
+
+def _build_lender_category_pivot(data: Dict[str, Any]) -> pd.DataFrame:
+    """Build pivot of effective outstanding by lender × category (sub-limits excluded)."""
+    fm = data["facility_master"].copy()
+    fm_active = fm[~fm["Sub_Limit_Flag"]].copy()
+    fm_active["Cat_Label"] = fm_active["Category"].map(CATEGORY_LABELS).fillna(fm_active["Category"])
+    
+    pivot = fm_active.pivot_table(
+        index="Lender", columns="Cat_Label",
+        values="Effective_OS", aggfunc="sum", fill_value=0,
+    )
+    
+    cols_present = [c for c in CATEGORY_ORDER if c in pivot.columns]
+    cols_extra = [c for c in pivot.columns if c not in cols_present]
+    pivot = pivot[cols_present + cols_extra]
+    
+    pivot["__total__"] = pivot.sum(axis=1)
+    pivot = pivot.sort_values("__total__", ascending=False)
+    pivot = pivot.drop(columns="__total__")
+    
+    return pivot
+
+
 # ════════════════════════════════════════════════════════════════════
 # LENDER × CATEGORY STACKED BAR
 # ════════════════════════════════════════════════════════════════════
 def render_lender_composition_stacked(data: Dict[str, Any]):
     """Each lender's exposure split by category — stacked bar."""
-    from lender_heatmap import _build_pivot, CATEGORY_LABELS
-    pivot = _build_pivot(data)
+    pivot = _build_lender_category_pivot(data)
     
     if pivot.empty:
         return
@@ -296,12 +371,21 @@ def render_renewal_timeline(data: Dict[str, Any]):
     fm["color"] = fm["days"].apply(_color)
     fm["expiry_str"] = fm["Validity_Date"].dt.strftime("%d-%b-%Y")
     
-    fig = go.Figure(go.Bar(
+    fig = go.Figure()
+    
+    # Background shaded zones for urgency bands (subtle, behind bars)
+    fig.add_vrect(x0=0, x1=30, fillcolor="rgba(239,68,68,0.10)", line_width=0, layer="below")
+    fig.add_vrect(x0=30, x1=60, fillcolor="rgba(245,158,11,0.08)", line_width=0, layer="below")
+    fig.add_vrect(x0=60, x1=90, fillcolor="rgba(59,130,246,0.06)", line_width=0, layer="below")
+    fig.add_vrect(x0=90, x1=180, fillcolor="rgba(139,92,246,0.05)", line_width=0, layer="below")
+    fig.add_vrect(x0=180, x1=400, fillcolor="rgba(100,116,139,0.04)", line_width=0, layer="below")
+    
+    fig.add_trace(go.Bar(
         x=fm["days"],
         y=fm["label"],
         orientation="h",
-        marker_color=fm["color"].tolist(),
-        text=[f"{d}d ({date})" for d, date in zip(fm["days"], fm["expiry_str"])],
+        marker=dict(color=fm["color"].tolist(), line=dict(color="#0F172A", width=0.5)),
+        text=[f"{d}d · {date}" for d, date in zip(fm["days"], fm["expiry_str"])],
         textposition="outside",
         textfont=dict(size=10, color="#F1F5F9"),
         hovertemplate=(
@@ -311,30 +395,42 @@ def render_renewal_timeline(data: Dict[str, Any]):
             "Sanction: ₹%{customdata[1]:.1f} Cr<extra></extra>"
         ),
         customdata=fm[["expiry_str", "Sanction_INR"]].values,
+        showlegend=False,
     ))
     
-    # Reference lines
-    for d, label, color in [
-        (30, "30 days (urgent)", "#EF4444"),
-        (60, "60 days", "#F59E0B"),
-        (90, "90 days", "#3B82F6"),
-        (180, "180 days", "#8B5CF6"),
-    ]:
-        fig.add_vline(x=d, line=dict(color=color, width=1, dash="dot"),
-                       annotation=dict(text=label, font=dict(color=color, size=9),
-                                       yref="paper", y=1, yanchor="top"))
+    # Reference lines (no inline text — use external legend below)
+    for d, color in [(30, "#EF4444"), (60, "#F59E0B"),
+                      (90, "#3B82F6"), (180, "#8B5CF6")]:
+        fig.add_vline(x=d, line=dict(color=color, width=1, dash="dot"))
     
+    # Annotation labels positioned BELOW the chart (no overlap)
     fig.update_layout(
-        height=max(400, 25 * len(fm)),
+        height=max(450, 26 * len(fm)),
         plot_bgcolor="#0F172A", paper_bgcolor="#0F172A",
         font=dict(color="#F1F5F9", family="Inter, sans-serif"),
-        xaxis=dict(title="Days to Expiry (from as-of date)",
-                    gridcolor="#334155", color="#94A3B8"),
+        xaxis=dict(
+            title="Days to Expiry (from as-of date)",
+            gridcolor="#334155", color="#94A3B8",
+            range=[0, max(200, fm["days"].max() + 60)],
+        ),
         yaxis=dict(autorange="reversed", color="#F1F5F9"),
-        margin=dict(l=20, r=120, t=40, b=40),
+        margin=dict(l=20, r=180, t=20, b=60),
         showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Color legend below chart (no overlap with bars)
+    st.markdown(
+        "<div style='display:flex;gap:18px;justify-content:center;font-size:0.82rem;"
+        "color:#94A3B8;margin-top:4px;flex-wrap:wrap;'>"
+        "<span>🔴 ≤30 days (urgent)</span>"
+        "<span>🟠 31-60 days (high)</span>"
+        "<span>🔵 61-90 days (medium)</span>"
+        "<span>🟣 91-180 days (low)</span>"
+        "<span>⚫ >180 days (monitor)</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════

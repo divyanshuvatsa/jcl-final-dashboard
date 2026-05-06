@@ -69,7 +69,8 @@ def check(name, condition, details=""):
 print("\n[PHASE 1] All module imports")
 modules_to_test = [
     "data_loader", "scenario_engine", "theme", "rule_based_ai",
-    "lender_heatmap", "rate_path_simulator", "snapshots", "pdf_export",
+    "snapshots", "pdf_export",
+    "visualizations", "market_rates", "gemini_ai",
     "dashboard_ui",
 ]
 import importlib

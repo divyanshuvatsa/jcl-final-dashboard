@@ -187,7 +187,6 @@ def render_rate_path_simulator(data: Dict[str, Any]):
     
     if len(fm) > 0:
         # Compute new interest per facility at final shock
-        from scenario_engine import recompute_interest
         end_shock = cumulative[-1]
         
         rows = []

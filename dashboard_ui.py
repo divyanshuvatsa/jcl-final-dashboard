@@ -18,6 +18,18 @@ from visualizations import (
 )
 
 
+# ─── HTML helper ────────────────────────────────────────────────────────
+def _html(s: str) -> str:
+    """Strip leading whitespace from each line to prevent Streamlit's markdown
+    parser from treating indented HTML as a code block (4+ space rule)."""
+    return "\n".join(line.lstrip() for line in s.strip().splitlines())
+
+
+def md(s: str):
+    """Shortcut: render HTML through st.markdown with indentation stripped."""
+    st.markdown(_html(s), unsafe_allow_html=True)
+
+
 # ─── Helper formatters ──────────────────────────────────────────────────
 def inr(v, d=1):
     if v is None or pd.isna(v): return "—"
@@ -33,28 +45,27 @@ def render_hero(verdict, color, narrative):
     # Convert hex to rgba for the radial gradient
     r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
     faint = f"rgba({r},{g},{b},0.10)"
-    st.markdown(f"""<div class='hero-card' style='--hero-color:{color};--hero-color-faint:{faint};'>
+    st.markdown(_html(f"""<div class='hero-card' style='--hero-color:{color};--hero-color-faint:{faint};'>
         <div class='hero-verdict' style='--hero-color:{color};'>● {verdict}</div>
-        <div class='hero-narrative'>{narrative}</div></div>""", unsafe_allow_html=True)
+        <div class='hero-narrative'>{narrative}</div></div>"""), unsafe_allow_html=True)
 
 
 def render_tab_header(label, title, subtitle=""):
     sub = f"<div class='tab-section-subtitle'>{subtitle}</div>" if subtitle else ""
-    st.markdown(f"""<div class='tab-section-header'>
+    st.markdown(_html(f"""<div class='tab-section-header'>
         <div>
           <div class='tab-section-eyebrow'>{label}</div>
           <div class='tab-section-title'>{title}</div>
           {sub}
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>"""), unsafe_allow_html=True)
 
 
 def render_big_kpi(label, value, sub="", color="#F1F5F9"):
-    st.markdown(f"""<div class='big-kpi-card' style='--kpi-color:{color};'>
+    st.markdown(_html(f"""<div class='big-kpi-card' style='--kpi-color:{color};'>
         <div class='big-kpi-label'>{label}</div>
         <div class='big-kpi-value'>{value}</div>
-        <div class='big-kpi-sub' style='color:{color};'>{sub}</div></div>""",
-        unsafe_allow_html=True)
+        <div class='big-kpi-sub' style='color:{color};'>{sub}</div></div>"""), unsafe_allow_html=True)
 
 
 def status_pill_class(s):
@@ -154,11 +165,11 @@ Edit the Excel → click Reload → everything updates.
         
         is_stressed = any([rate_shock, spread_shock, ebitda_change, debt_change])
         if is_stressed:
-            st.markdown(f"""<div class='callout-warn'>
+            st.markdown(_html(f"""<div class='callout-warn'>
                 ⚠️ <b>Stress Active</b><br>
                 Rate {rate_shock:+d}bps · Spread {spread_shock:+d}bps · 
                 EBITDA {ebitda_change:+d}% · Debt {debt_change:+d}%
-            </div>""", unsafe_allow_html=True)
+            </div>"""), unsafe_allow_html=True)
     
     # Live market rates (collapsed expander outside main controls block)
     try:
@@ -188,7 +199,7 @@ Edit the Excel → click Reload → everything updates.
 def render_header(data: Dict[str, Any]):
     c1, c2, c3 = st.columns([5, 2, 2])
     with c1:
-        st.markdown(f"""<div style='background:linear-gradient(90deg, rgba(37,99,235,0.1) 0%, transparent 100%);
+        st.markdown(_html(f"""<div style='background:linear-gradient(90deg, rgba(37,99,235,0.1) 0%, transparent 100%);
                                 padding:16px 20px;border-radius:12px;border:1px solid #1E293B;'>
             <div style='font-size:1.7rem;font-weight:800;
                         background:linear-gradient(90deg,#60A5FA 0%,#C084FC 100%);
@@ -199,17 +210,17 @@ def render_header(data: Dict[str, Any]):
                 Real-time covenant tracking · Stress testing · Repayment timeline · 
                 As-of {pd.Timestamp(data['as_of_date']).strftime('%d-%b-%Y')}
             </div>
-        </div>""", unsafe_allow_html=True)
+        </div>"""), unsafe_allow_html=True)
     with c2:
-        st.markdown(f"""<div style='background:#1E293B;border-radius:12px;padding:14px 18px;text-align:right;'>
+        st.markdown(_html(f"""<div style='background:#1E293B;border-radius:12px;padding:14px 18px;text-align:right;'>
             <div style='color:#94A3B8;font-size:0.7rem;text-transform:uppercase;'>FX Rate</div>
             <div style='color:#F1F5F9;font-size:1.3rem;font-weight:700;'>₹{data['fx_rate']:.2f}/USD</div>
-        </div>""", unsafe_allow_html=True)
+        </div>"""), unsafe_allow_html=True)
     with c3:
-        st.markdown(f"""<div style='background:#1E293B;border-radius:12px;padding:14px 18px;text-align:right;'>
+        st.markdown(_html(f"""<div style='background:#1E293B;border-radius:12px;padding:14px 18px;text-align:right;'>
             <div style='color:#94A3B8;font-size:0.7rem;text-transform:uppercase;'>Basis</div>
             <div style='color:#F1F5F9;font-size:1.3rem;font-weight:700;'>{data['financial_basis']}</div>
-        </div>""", unsafe_allow_html=True)
+        </div>"""), unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -309,7 +320,7 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
     with c2:
         top = cs.iloc[0]
         ts = top["Total_Banking_Exposure"] / t["Total_Banking_Exposure"] * 100
-        st.markdown(f"""
+        st.markdown(_html(f"""
         <div style='padding:16px 0;'>
             <div style='font-size:0.78rem;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;'>Largest Lender</div>
             <div style='font-size:1.5rem;font-weight:700;color:#F1F5F9;'>{top['Lender']}</div>
@@ -324,7 +335,7 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
             <div style='font-size:0.78rem;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;'>Diversification</div>
             <div style='font-size:1.5rem;font-weight:700;color:{"#F59E0B" if ts > 40 else "#10B981"};'>{"Concentrated" if ts > 40 else "Diversified"}</div>
         </div>
-        """, unsafe_allow_html=True)
+        """), unsafe_allow_html=True)
     
     # Three-bucket detailed table
     with st.expander("🔍 Detailed three-bucket breakdown", expanded=False):
@@ -552,7 +563,7 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
             actual_str = f"{actual:.2f}x" if isinstance(actual, (int, float)) else str(actual)[:30]
             thr_str = f"{r['Operator']}{r['Threshold']:.2f}x" if isinstance(r['Threshold'], (int, float)) else "≥A-"
             hr_str = f"{r['Headroom_Pct']:+.1f}%" if r["Headroom_Pct"] is not None else "—"
-            st.markdown(f"""<div style='background:{bg};border-left:4px solid {color};
+            st.markdown(_html(f"""<div style='background:{bg};border-left:4px solid {color};
                                   border-radius:12px;padding:14px 18px;margin-bottom:8px;'>
                 <div style='display:flex;justify-content:space-between;'>
                     <div style='flex:1;'>
@@ -569,7 +580,7 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
                         <div style='font-size:1.5rem;font-weight:800;color:{color};'>{hr_str}</div>
                     </div>
                 </div>
-            </div>""", unsafe_allow_html=True)
+            </div>"""), unsafe_allow_html=True)
     else:
         st.markdown("<div class='callout-good'><b>✅ All 24 covenants well within thresholds.</b></div>",
                      unsafe_allow_html=True)
@@ -619,12 +630,12 @@ def render_tab_scenarios(data: Dict[str, Any], controls: Dict[str, Any]):
     render_hero(verdict, color, narrative)
     
     if controls["is_stressed"]:
-        st.markdown(f"""<div class='callout-info'>🔬 <b>Live Stress Active</b>:
+        st.markdown(_html(f"""<div class='callout-info'>🔬 <b>Live Stress Active</b>:
             <span class='mini-stat'>Rate {controls['rate_shock']:+d}b</span>
             <span class='mini-stat'>Spread {controls['spread_shock']:+d}b</span>
             <span class='mini-stat'>EBITDA {controls['ebitda_change']:+d}%</span>
             <span class='mini-stat'>Debt {controls['debt_change']:+d}%</span>
-        </div>""", unsafe_allow_html=True)
+        </div>"""), unsafe_allow_html=True)
     
     # Current scenario impact
     render_tab_header("LIVE IMPACT", "Current Scenario vs Base")
@@ -770,13 +781,13 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
         with col:
             count = len(df)
             value = df["Sanction_INR"].sum() if count else 0
-            st.markdown(f"""<div style='opacity:{opacity};background:#1E293B;
+            st.markdown(_html(f"""<div style='opacity:{opacity};background:#1E293B;
                 border-left:4px solid {color};border-radius:8px;padding:12px;'>
                 <div style='color:#94A3B8;font-size:0.7rem;letter-spacing:0.08em;'>{label}</div>
                 <div style='color:#F1F5F9;font-size:1.5rem;font-weight:700;'>{count}</div>
                 <div style='color:{color};font-size:0.78rem;'>
                     {f"₹{value:,.1f} Cr" if count else "—"}
-                </div></div>""", unsafe_allow_html=True)
+                </div></div>"""), unsafe_allow_html=True)
     
     _kpi_with_filter(c1, "≤30 days", next_30, "#EF4444", "≤30 days")
     _kpi_with_filter(c2, "31-60 days", next_60, "#F59E0B", "31-60 days")
@@ -925,7 +936,7 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
             action = "Routine monitoring only."
             icon = "⚪"
         
-        st.markdown(f"""<div style='background:{bg};border-left:4px solid {color};
+        st.markdown(_html(f"""<div style='background:{bg};border-left:4px solid {color};
                               border-radius:12px;padding:14px 18px;margin-bottom:8px;
                               transition:transform 0.2s ease, box-shadow 0.2s ease;'
                               onmouseover="this.style.transform='translateX(4px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.3)';"
@@ -952,7 +963,7 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
                     <div style='color:#94A3B8;font-size:0.78rem;margin-top:2px;'>{inr(r['Sanction_INR'])}</div>
                 </div>
             </div>
-        </div>""", unsafe_allow_html=True)
+        </div>"""), unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -974,9 +985,9 @@ def render_tab_ai(data: Dict[str, Any], controls: Dict[str, Any]):
     for i, ins in enumerate(insights):
         with cols[i % 2]:
             level = ins.get("level", "info")
-            st.markdown(f"""<div class='insight-card {level}'>
+            st.markdown(_html(f"""<div class='insight-card {level}'>
                 <div class='insight-title'>{ins['icon']} {ins['title']}</div>
-                <div class='insight-body'>{ins['body']}</div></div>""", unsafe_allow_html=True)
+                <div class='insight-body'>{ins['body']}</div></div>"""), unsafe_allow_html=True)
     
     # Suggested questions
     st.markdown("#### 💬 Suggested Questions")

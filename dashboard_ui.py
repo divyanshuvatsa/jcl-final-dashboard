@@ -30,23 +30,31 @@ def pct(v, d=2):
 
 
 def render_hero(verdict, color, narrative):
-    st.markdown(f"""<div class='hero-section'>
-        <div class='hero-verdict-badge' style='background:{color};color:white;'>● {verdict}</div>
-        <p class='hero-narrative'>{narrative}</p></div>""", unsafe_allow_html=True)
+    # Convert hex to rgba for the radial gradient
+    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+    faint = f"rgba({r},{g},{b},0.10)"
+    st.markdown(f"""<div class='hero-card' style='--hero-color:{color};--hero-color-faint:{faint};'>
+        <div class='hero-verdict' style='--hero-color:{color};'>● {verdict}</div>
+        <div class='hero-narrative'>{narrative}</div></div>""", unsafe_allow_html=True)
 
 
 def render_tab_header(label, title, subtitle=""):
-    sub = f"<div class='tab-header-subtitle'>{subtitle}</div>" if subtitle else ""
-    st.markdown(f"""<div class='tab-header'>
-        <div class='tab-header-label'>{label}</div>
-        <div class='tab-header-title'>{title}</div>{sub}</div>""", unsafe_allow_html=True)
+    sub = f"<div class='tab-section-subtitle'>{subtitle}</div>" if subtitle else ""
+    st.markdown(f"""<div class='tab-section-header'>
+        <div>
+          <div class='tab-section-eyebrow'>{label}</div>
+          <div class='tab-section-title'>{title}</div>
+          {sub}
+        </div>
+    </div>""", unsafe_allow_html=True)
 
 
 def render_big_kpi(label, value, sub="", color="#F1F5F9"):
-    st.markdown(f"""<div class='big-kpi'>
+    st.markdown(f"""<div class='big-kpi-card' style='--kpi-color:{color};'>
         <div class='big-kpi-label'>{label}</div>
-        <div class='big-kpi-value' style='color:{color};'>{value}</div>
-        <div class='big-kpi-sub'>{sub}</div></div>""", unsafe_allow_html=True)
+        <div class='big-kpi-value'>{value}</div>
+        <div class='big-kpi-sub' style='color:{color};'>{sub}</div></div>""",
+        unsafe_allow_html=True)
 
 
 def status_pill_class(s):
@@ -684,7 +692,7 @@ def render_tab_scenarios(data: Dict[str, Any], controls: Dict[str, Any]):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TAB 5 — RENEWAL CALENDAR (NEW FEATURE)
+# TAB 5 — RENEWAL CALENDAR (INTEGRATED + DYNAMIC)
 # ═══════════════════════════════════════════════════════════════════════
 def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
     fm = data["facility_master"].copy()
@@ -712,81 +720,239 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
         narrative = "No renewals required in next 60 days. Continue regular monitoring."
     render_hero(verdict, color, narrative)
     
-    render_tab_header("CALENDAR", "Renewal Pipeline by Bucket")
+    # ─── Interactive filter controls ────────────────────────────────
+    render_tab_header("FILTER", "Refine the View",
+                       "Pick urgency bucket and lenders. Timeline + action list update together.")
+    
+    fc1, fc2 = st.columns([2, 3])
+    
+    with fc1:
+        urgency_filter = st.radio(
+            "Urgency Bucket",
+            ["All", "≤30 days", "31-60 days", "61-90 days", "91-180 days", ">180 days"],
+            horizontal=False,
+            key="renewal_urgency_filter",
+        )
+    
+    with fc2:
+        all_lenders = sorted(fm["Lender"].unique().tolist())
+        selected_lenders = st.multiselect(
+            "Lenders",
+            options=all_lenders,
+            default=all_lenders,
+            key="renewal_lender_filter",
+        )
+        
+        # Quick stats for selection
+        st.markdown("##### KPIs (within filter)")
+    
+    # Apply filters
+    filtered = fm.copy()
+    if urgency_filter == "≤30 days":
+        filtered = filtered[filtered["days_to_expiry"].between(0, 30)]
+    elif urgency_filter == "31-60 days":
+        filtered = filtered[filtered["days_to_expiry"].between(31, 60)]
+    elif urgency_filter == "61-90 days":
+        filtered = filtered[filtered["days_to_expiry"].between(61, 90)]
+    elif urgency_filter == "91-180 days":
+        filtered = filtered[filtered["days_to_expiry"].between(91, 180)]
+    elif urgency_filter == ">180 days":
+        filtered = filtered[filtered["days_to_expiry"] > 180]
+    
+    if selected_lenders:
+        filtered = filtered[filtered["Lender"].isin(selected_lenders)]
+    
+    # ─── Bucket KPIs (always show all 5, but highlight filter) ──────
     c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: render_big_kpi("≤30 days", str(len(next_30)),
-                              inr(next_30["Sanction_INR"].sum()) if len(next_30) else "—",
-                              color="#EF4444")
-    with c2: render_big_kpi("31-60 days", str(len(next_60)),
-                              inr(next_60["Sanction_INR"].sum()) if len(next_60) else "—",
-                              color="#F59E0B")
-    with c3: render_big_kpi("61-90 days", str(len(next_90)),
-                              inr(next_90["Sanction_INR"].sum()) if len(next_90) else "—",
-                              color="#3B82F6")
-    with c4: render_big_kpi("91-180 days", str(len(next_180)),
-                              inr(next_180["Sanction_INR"].sum()) if len(next_180) else "—",
-                              color="#94A3B8")
-    with c5: render_big_kpi(">180 days", str(len(later)),
-                              inr(later["Sanction_INR"].sum()) if len(later) else "—",
-                              color="#10B981")
+    def _kpi_with_filter(col, label, df, color, key):
+        is_active = (urgency_filter == key) or (urgency_filter == "All")
+        opacity = "1.0" if is_active else "0.4"
+        with col:
+            count = len(df)
+            value = df["Sanction_INR"].sum() if count else 0
+            st.markdown(f"""<div style='opacity:{opacity};background:#1E293B;
+                border-left:4px solid {color};border-radius:8px;padding:12px;'>
+                <div style='color:#94A3B8;font-size:0.7rem;letter-spacing:0.08em;'>{label}</div>
+                <div style='color:#F1F5F9;font-size:1.5rem;font-weight:700;'>{count}</div>
+                <div style='color:{color};font-size:0.78rem;'>
+                    {f"₹{value:,.1f} Cr" if count else "—"}
+                </div></div>""", unsafe_allow_html=True)
     
-    # Detailed table per bucket
-    render_tab_header("TIMELINE", "Renewal Calendar (next 12 months)",
-                       "Each bar shows days until expiry. Color reflects urgency.")
-    render_renewal_timeline(data)
+    _kpi_with_filter(c1, "≤30 days", next_30, "#EF4444", "≤30 days")
+    _kpi_with_filter(c2, "31-60 days", next_60, "#F59E0B", "31-60 days")
+    _kpi_with_filter(c3, "61-90 days", next_90, "#3B82F6", "61-90 days")
+    _kpi_with_filter(c4, "91-180 days", next_180, "#94A3B8", "91-180 days")
+    _kpi_with_filter(c5, ">180 days", later, "#10B981", ">180 days")
     
-    render_tab_header("ACTIONS", "Priority-Ordered Renewal List")
-    upcoming = fm[fm["days_to_expiry"].between(-30, 365)].sort_values("days_to_expiry")
+    # ─── Combined integrated view: timeline + actions side-by-side ─
+    render_tab_header("INTEGRATED VIEW",
+                       f"Timeline + Actions for {len(filtered)} Facilities",
+                       "Hover any bar for full detail. Action cards mirror the timeline order.")
     
-    if len(upcoming) == 0:
-        st.markdown("<div class='callout-good'><b>✅ No renewals in pipeline.</b></div>",
-                     unsafe_allow_html=True)
-    else:
-        for _, r in upcoming.iterrows():
-            days = int(r["days_to_expiry"])
-            if days < 0:
-                priority, color = "EXPIRED", "#EF4444"
-                bg = "rgba(239,68,68,0.1)"
-                action = "Renewal overdue. Contact lender immediately."
-            elif days <= 30:
-                priority, color = "URGENT", "#EF4444"
-                bg = "rgba(239,68,68,0.1)"
-                action = "Submit renewal request now."
-            elif days <= 60:
-                priority, color = "HIGH", "#F59E0B"
-                bg = "rgba(245,158,11,0.1)"
-                action = "Begin renewal preparation."
-            elif days <= 90:
-                priority, color = "MEDIUM", "#3B82F6"
-                bg = "rgba(59,130,246,0.05)"
-                action = "Schedule renewal discussions."
-            else:
-                priority, color = "LOW", "#94A3B8"
-                bg = "rgba(148,163,184,0.05)"
-                action = "Monitor."
-            
-            st.markdown(f"""<div style='background:{bg};border-left:4px solid {color};
-                                  border-radius:12px;padding:14px 18px;margin-bottom:8px;'>
-                <div style='display:flex;justify-content:space-between;'>
-                    <div style='flex:2;'>
-                        <span style='background:{color};color:white;padding:2px 8px;
-                                      border-radius:4px;font-size:0.65rem;font-weight:800;
-                                      letter-spacing:0.08em;'>{priority}</span>
-                        <span style='color:#94A3B8;font-size:0.78rem;margin-left:8px;'>
-                            {r['Lender']} · {r['Facility']}
-                        </span>
-                        <div style='color:#F1F5F9;font-size:0.95rem;margin-top:4px;'>{action}</div>
-                    </div>
-                    <div style='flex:1;text-align:right;'>
-                        <div style='color:#94A3B8;font-size:0.7rem;'>EXPIRES</div>
-                        <div style='color:#F1F5F9;font-size:1rem;font-weight:700;'>
-                            {r['Validity_Date'].strftime('%d-%b-%Y')}
-                        </div>
-                        <div style='color:{color};font-size:0.85rem;'>{days:+d} days</div>
-                        <div style='color:#94A3B8;font-size:0.78rem;'>{inr(r['Sanction_INR'])}</div>
+    if len(filtered) == 0:
+        st.info("No facilities match the current filter. Adjust above to see more.")
+        return
+    
+    # Sort by urgency
+    filtered = filtered.sort_values("days_to_expiry")
+    
+    # ─── Rich timeline with action labels embedded ──────────────────
+    fdf = filtered.copy()
+    fdf["label"] = fdf["Lender"] + " — " + fdf["Facility"]
+    fdf["expiry_str"] = fdf["Validity_Date"].dt.strftime("%d-%b-%Y")
+    
+    def _color(d):
+        if d < 0: return "#7F1D1D"  # dark red for expired
+        if d <= 30: return "#EF4444"
+        if d <= 60: return "#F59E0B"
+        if d <= 90: return "#3B82F6"
+        if d <= 180: return "#8B5CF6"
+        return "#64748B"
+    
+    def _action(d):
+        if d < 0: return "🚨 OVERDUE — contact lender now"
+        if d <= 30: return "🔴 Submit renewal request"
+        if d <= 60: return "🟠 Begin renewal preparation"
+        if d <= 90: return "🔵 Schedule discussions"
+        if d <= 180: return "🟣 Monitor & plan"
+        return "⚪ Routine monitoring"
+    
+    fdf["color"] = fdf["days_to_expiry"].apply(_color)
+    fdf["action"] = fdf["days_to_expiry"].apply(_action)
+    
+    fig = go.Figure()
+    
+    # Background urgency zones
+    fig.add_vrect(x0=0, x1=30, fillcolor="rgba(239,68,68,0.10)", line_width=0, layer="below")
+    fig.add_vrect(x0=30, x1=60, fillcolor="rgba(245,158,11,0.08)", line_width=0, layer="below")
+    fig.add_vrect(x0=60, x1=90, fillcolor="rgba(59,130,246,0.06)", line_width=0, layer="below")
+    fig.add_vrect(x0=90, x1=180, fillcolor="rgba(139,92,246,0.05)", line_width=0, layer="below")
+    fig.add_vrect(x0=180, x1=400, fillcolor="rgba(100,116,139,0.04)", line_width=0, layer="below")
+    
+    fig.add_trace(go.Bar(
+        x=fdf["days_to_expiry"],
+        y=fdf["label"],
+        orientation="h",
+        marker=dict(color=fdf["color"].tolist(),
+                     line=dict(color="#0F172A", width=0.5)),
+        text=[f"{d}d · {date} · ₹{san:.1f} Cr"
+              for d, date, san in zip(fdf["days_to_expiry"], fdf["expiry_str"], fdf["Sanction_INR"])],
+        textposition="outside",
+        textfont=dict(size=10, color="#F1F5F9"),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "📅 Expires: %{customdata[0]}<br>"
+            "⏱ Days to expiry: %{x}<br>"
+            "💰 Sanction: ₹%{customdata[1]:.1f} Cr<br>"
+            "📋 Category: %{customdata[2]}<br>"
+            "🎯 %{customdata[3]}<extra></extra>"
+        ),
+        customdata=fdf[["expiry_str", "Sanction_INR", "Category", "action"]].values,
+        showlegend=False,
+    ))
+    
+    for d, color in [(0, "#94A3B8"), (30, "#EF4444"), (60, "#F59E0B"),
+                      (90, "#3B82F6"), (180, "#8B5CF6")]:
+        fig.add_vline(x=d, line=dict(color=color, width=1, dash="dot"))
+    
+    chart_height = max(360, 28 * len(fdf))
+    fig.update_layout(
+        height=chart_height,
+        plot_bgcolor="#0F172A", paper_bgcolor="#0F172A",
+        font=dict(color="#F1F5F9", family="Inter, sans-serif"),
+        xaxis=dict(
+            title="Days to Expiry (negative = expired)",
+            gridcolor="#334155", color="#94A3B8",
+            range=[min(-10, fdf["days_to_expiry"].min() - 10),
+                    max(200, fdf["days_to_expiry"].max() + 80)],
+        ),
+        yaxis=dict(autorange="reversed", color="#F1F5F9"),
+        margin=dict(l=20, r=200, t=20, b=60),
+        showlegend=False,
+        transition=dict(duration=400, easing="cubic-in-out"),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    
+    st.markdown(
+        "<div style='display:flex;gap:18px;justify-content:center;font-size:0.82rem;"
+        "color:#94A3B8;margin-top:-8px;flex-wrap:wrap;'>"
+        "<span>🔴 ≤30 days · urgent</span>"
+        "<span>🟠 31-60 · high</span>"
+        "<span>🔵 61-90 · medium</span>"
+        "<span>🟣 91-180 · low</span>"
+        "<span>⚫ >180 · monitor</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    
+    # ─── Action cards (filtered, same order as timeline) ────────────
+    render_tab_header("ACTION ITEMS",
+                       f"{len(filtered)} Facilit{'y' if len(filtered)==1 else 'ies'} · Priority Order")
+    
+    # Use 2-column grid for compactness
+    upcoming = filtered[filtered["days_to_expiry"].between(-365, 730)].sort_values("days_to_expiry")
+    
+    for _, r in upcoming.iterrows():
+        days = int(r["days_to_expiry"])
+        if days < 0:
+            priority, color = "EXPIRED", "#7F1D1D"
+            bg = "linear-gradient(90deg, rgba(239,68,68,0.18), rgba(239,68,68,0.06))"
+            action = "Renewal overdue. Contact lender immediately."
+            icon = "🚨"
+        elif days <= 30:
+            priority, color = "URGENT", "#EF4444"
+            bg = "linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.03))"
+            action = "Submit renewal request now."
+            icon = "🔴"
+        elif days <= 60:
+            priority, color = "HIGH", "#F59E0B"
+            bg = "linear-gradient(90deg, rgba(245,158,11,0.12), rgba(245,158,11,0.02))"
+            action = "Begin renewal preparation."
+            icon = "🟠"
+        elif days <= 90:
+            priority, color = "MEDIUM", "#3B82F6"
+            bg = "linear-gradient(90deg, rgba(59,130,246,0.08), rgba(59,130,246,0.02))"
+            action = "Schedule renewal discussions."
+            icon = "🔵"
+        elif days <= 180:
+            priority, color = "LOW", "#8B5CF6"
+            bg = "linear-gradient(90deg, rgba(139,92,246,0.06), rgba(139,92,246,0.02))"
+            action = "Monitor and plan ahead."
+            icon = "🟣"
+        else:
+            priority, color = "MONITOR", "#64748B"
+            bg = "linear-gradient(90deg, rgba(100,116,139,0.05), rgba(100,116,139,0.01))"
+            action = "Routine monitoring only."
+            icon = "⚪"
+        
+        st.markdown(f"""<div style='background:{bg};border-left:4px solid {color};
+                              border-radius:12px;padding:14px 18px;margin-bottom:8px;
+                              transition:transform 0.2s ease, box-shadow 0.2s ease;'
+                              onmouseover="this.style.transform='translateX(4px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.3)';"
+                              onmouseout="this.style.transform='translateX(0)';this.style.boxShadow='none';">
+            <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:16px;'>
+                <div style='flex:2;'>
+                    <span style='background:{color};color:white;padding:3px 10px;
+                                  border-radius:6px;font-size:0.65rem;font-weight:800;
+                                  letter-spacing:0.08em;'>{icon} {priority}</span>
+                    <span style='color:#94A3B8;font-size:0.78rem;margin-left:10px;'>
+                        {r['Lender']} · {r['Facility']}
+                    </span>
+                    <div style='color:#F1F5F9;font-size:0.95rem;margin-top:6px;font-weight:500;'>{action}</div>
+                    <div style='color:#64748B;font-size:0.72rem;margin-top:2px;'>
+                        {r['Category']} · Sub-limit: {'Yes' if r.get('Sub_Limit_Flag') else 'No'}
                     </div>
                 </div>
-            </div>""", unsafe_allow_html=True)
+                <div style='flex:1;text-align:right;min-width:160px;'>
+                    <div style='color:#94A3B8;font-size:0.7rem;letter-spacing:0.06em;'>EXPIRES</div>
+                    <div style='color:#F1F5F9;font-size:1.1rem;font-weight:700;'>
+                        {r['Validity_Date'].strftime('%d-%b-%Y')}
+                    </div>
+                    <div style='color:{color};font-size:0.9rem;font-weight:600;'>{days:+d} days</div>
+                    <div style='color:#94A3B8;font-size:0.78rem;margin-top:2px;'>{inr(r['Sanction_INR'])}</div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════

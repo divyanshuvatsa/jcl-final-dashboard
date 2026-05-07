@@ -1,140 +1,430 @@
-"""Theme: colors, CSS, plotly defaults — production-quality dark mode."""
+"""Theme — colors, fonts, CSS. Polished dark mode."""
+
+from __future__ import annotations
+
 
 COLORS = {
-    "navy": "#0A2540", "navy_light": "#1F3864",
-    "blue": "#2563EB", "blue_light": "#60A5FA",
-    "purple": "#8B5CF6", "purple_light": "#C084FC",
-    "accent_gold": "#F59E0B",
-    "compliant": "#10B981", "watch": "#3B82F6",
-    "near_breach": "#F59E0B", "breach": "#EF4444",
-    "neutral": "#6B7280", "pending": "#94A3B8",
-    "bg_primary": "#0F172A", "bg_secondary": "#1E293B", "bg_tertiary": "#334155",
-    "text_primary": "#F1F5F9", "text_secondary": "#94A3B8", "text_dim": "#64748B",
+    "bg_dark":     "#0B1426",
+    "bg_card":     "#1A2540",
+    "bg_subtle":   "#162136",
+    "border":      "#1E3A5F",
+    "border_subtle": "#2A3F66",
+    "text":        "#F1F5F9",
+    "text_dim":    "#94A3B8",
+    "text_subtle": "#64748B",
+    "accent":      "#3B82F6",
+    "good":        "#10B981",
+    "warn":        "#F59E0B",
+    "bad":         "#EF4444",
+    "info":        "#06B6D4",
+    "purple":      "#8B5CF6",
+    "magenta":     "#EC4899",
 }
 
 LENDER_COLORS = {
-    "RBL Bank": "#3B82F6",
-    "YES Bank": "#8B5CF6",
-    "Bajaj Finance": "#F59E0B",
-    "ICICI Bank": "#EC4899",
-    "South Indian Bank": "#10B981",
+    "RBL Bank":          "#3B82F6",   # Royal blue
+    "YES Bank":          "#8B5CF6",   # Violet
+    "ICICI Bank":        "#F97316",   # Orange
+    "South Indian Bank": "#06B6D4",   # Cyan
+    "Bajaj Finance":     "#EC4899",   # Magenta
 }
 
 CATEGORY_COLORS = {
-    "FB": "#3B82F6",
-    "FB-Term": "#F59E0B",
-    "FB-FCY": "#60A5FA",
-    "FB-FDbacked": "#06B6D4",
-    "NFB": "#8B5CF6",
-    "NFB-FDbacked": "#A78BFA",
-    "Hedge": "#10B981",
+    "FB-Term":      "#3B82F6",
+    "FB":           "#8B5CF6",
+    "FB-FCY":       "#06B6D4",
+    "FB-FDbacked":  "#10B981",
+    "NFB":          "#F59E0B",
+    "NFB-FDbacked": "#84CC16",
+    "Hedge":        "#EC4899",
 }
 
 STATUS_COLORS = {
-    "Compliant": "#10B981",
-    "Watch": "#3B82F6",
+    "Compliant":   "#10B981",
+    "Watch":       "#3B82F6",
     "Near Breach": "#F59E0B",
-    "Breach": "#EF4444",
-    "Pending": "#94A3B8",
+    "Breach":      "#EF4444",
 }
 
-CHART_LAYOUT = {
-    "template": "plotly_dark",
-    "paper_bgcolor": "#1E293B",
-    "plot_bgcolor": "#1E293B",
-    "font": {"family": "Inter, system-ui, sans-serif", "size": 13, "color": "#F1F5F9"},
-    "margin": {"l": 50, "r": 30, "t": 50, "b": 50},
-}
+
+# Plotly default chart layout (dark)
+CHART_LAYOUT = dict(
+    plot_bgcolor="#0B1426",
+    paper_bgcolor="#0B1426",
+    font=dict(color="#F1F5F9", family="Inter, -apple-system, sans-serif"),
+    margin=dict(l=20, r=20, t=20, b=40),
+    transition=dict(duration=400, easing="cubic-in-out"),
+)
 
 
 CUSTOM_CSS = """
 <style>
-#MainMenu, footer, header {visibility: hidden;}
-.stApp {background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);}
-section[data-testid="stSidebar"] {background: #0A1628; border-right: 1px solid #334155;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
 
-h1 {font-size: 2rem !important; font-weight: 800 !important;
-    background: linear-gradient(90deg, #60A5FA 0%, #C084FC 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;}
-h2 {font-size: 1.4rem !important; font-weight: 700 !important;
-    border-bottom: 2px solid #3B82F6; padding-bottom: 6px;}
-h3 {font-size: 1.1rem !important; color: #94A3B8 !important;}
+/* ─── Base ─────────────────────────────────────────────────────────── */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
 
-/* KPI tiles */
-.big-kpi {background: linear-gradient(135deg, #1E293B 0%, #243449 100%);
-    border-radius: 16px; padding: 22px; border: 1px solid #334155; height: 100%;}
-.big-kpi-label {color: #94A3B8; font-size: 0.75rem; text-transform: uppercase;
-    letter-spacing: 0.10em; font-weight: 600; margin-bottom: 8px;}
-.big-kpi-value {color: #F1F5F9; font-size: 2.2rem; font-weight: 800; line-height: 1;}
-.big-kpi-sub {color: #94A3B8; font-size: 0.8rem; margin-top: 6px;}
+.stApp {
+    background: linear-gradient(180deg, #0B1426 0%, #0A1220 100%);
+}
 
-/* Hero */
-.hero-section {background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-    border-radius: 20px; padding: 28px 32px; margin-bottom: 20px;
-    border: 1px solid #334155; position: relative;}
-.hero-verdict-badge {display: inline-block; padding: 6px 14px;
-    border-radius: 999px; font-size: 0.75rem; font-weight: 800;
-    letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 14px;}
-.hero-narrative {font-size: 1.15rem; line-height: 1.55; color: #F1F5F9; margin: 0;}
-.hero-narrative b {color: #FFFFFF; font-weight: 700;}
+/* Subtle texture on body */
+.stApp::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(circle at 20% 0%, rgba(59,130,246,0.04), transparent 50%),
+                radial-gradient(circle at 80% 100%, rgba(139,92,246,0.04), transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+}
 
-/* Tab headers */
-.tab-header {margin: 22px 0 14px 0;}
-.tab-header-label {color: #60A5FA; font-size: 0.75rem;
-    text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700;}
-.tab-header-title {color: #F1F5F9; font-size: 1.5rem; font-weight: 800;
-    margin: 4px 0 0 0;}
-.tab-header-subtitle {color: #94A3B8; font-size: 0.9rem; margin-top: 4px;}
+/* ─── Sidebar ──────────────────────────────────────────────────────── */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0F1A30 0%, #0B1426 100%);
+    border-right: 1px solid #1E3A5F;
+}
 
-/* Status pills */
-.status-pill {display: inline-block; padding: 3px 10px; border-radius: 999px;
-    font-size: 0.7rem; font-weight: 700; text-transform: uppercase;}
-.status-compliant {background: rgba(16,185,129,.15); color: #10B981; border: 1px solid #10B981;}
-.status-watch {background: rgba(59,130,246,.15); color: #60A5FA; border: 1px solid #3B82F6;}
-.status-near {background: rgba(245,158,11,.15); color: #F59E0B; border: 1px solid #F59E0B;}
-.status-breach {background: rgba(239,68,68,.15); color: #EF4444; border: 1px solid #EF4444;}
+section[data-testid="stSidebar"] .stMarkdown h2,
+section[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #F1F5F9;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
 
-/* Insight cards */
-.insight-card {background: linear-gradient(135deg, #1E293B 0%, #243449 100%);
-    border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;
-    border-left: 4px solid #3B82F6;}
-.insight-card.good {border-left-color: #10B981; background: linear-gradient(135deg, rgba(16,185,129,.1) 0%, #1E293B 100%);}
-.insight-card.warning {border-left-color: #F59E0B; background: linear-gradient(135deg, rgba(245,158,11,.1) 0%, #1E293B 100%);}
-.insight-card.danger {border-left-color: #EF4444; background: linear-gradient(135deg, rgba(239,68,68,.1) 0%, #1E293B 100%);}
-.insight-card.info {border-left-color: #3B82F6;}
-.insight-title {font-size: 0.82rem; font-weight: 700; color: #F1F5F9;
-    text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;}
-.insight-body {font-size: 0.9rem; color: #CBD5E1; line-height: 1.5;}
+/* ─── Tabs ─────────────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: rgba(26,37,64,0.4);
+    padding: 6px;
+    border-radius: 14px;
+    border: 1px solid #1E3A5F;
+}
 
-/* Data layer badges */
-.badge-live {display: inline-block; background: rgba(16,185,129,.15); color: #10B981;
-    border: 1px solid #10B981; font-size: 0.65rem; font-weight: 700;
-    padding: 1px 6px; border-radius: 3px; margin-right: 4px;}
-.badge-frozen {display: inline-block; background: rgba(245,158,11,.15); color: #F59E0B;
-    border: 1px solid #F59E0B; font-size: 0.65rem; font-weight: 700;
-    padding: 1px 6px; border-radius: 3px; margin-right: 4px;}
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    color: #94A3B8;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 10px 18px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 0;
+}
 
-/* Callouts */
-.callout-good {background: rgba(16,185,129,.1); border-left: 4px solid #10B981;
-    border-radius: 8px; padding: 12px 16px; margin: 10px 0; color: #D1FAE5;}
-.callout-warn {background: rgba(245,158,11,.1); border-left: 4px solid #F59E0B;
-    border-radius: 8px; padding: 12px 16px; margin: 10px 0; color: #FED7AA;}
-.callout-info {background: rgba(59,130,246,.1); border-left: 4px solid #3B82F6;
-    border-radius: 8px; padding: 12px 16px; margin: 10px 0; color: #DBEAFE;}
-.callout-danger {background: rgba(239,68,68,.1); border-left: 4px solid #EF4444;
-    border-radius: 8px; padding: 12px 16px; margin: 10px 0; color: #FECACA;}
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(59,130,246,0.10);
+    color: #F1F5F9;
+}
 
-/* Live banner */
-.live-banner {background: linear-gradient(90deg, #DC2626 0%, #EF4444 100%);
-    color: white; padding: 8px 16px; border-radius: 6px; font-weight: 600;
-    text-align: center; margin-bottom: 12px; font-size: 13px; letter-spacing: 0.5px;}
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, #3B82F6, #6366F1);
+    color: white !important;
+    box-shadow: 0 4px 12px rgba(59,130,246,0.35);
+}
 
-/* Mini-stats */
-.mini-stat {display: inline-block; padding: 2px 10px; background: rgba(59,130,246,.15);
-    border-radius: 12px; color: #60A5FA; font-size: 0.75rem; font-weight: 600; margin: 0 4px;}
+/* ─── Hero card ────────────────────────────────────────────────────── */
+.hero-card {
+    background: linear-gradient(135deg, #1A2540 0%, #162136 100%);
+    border: 1px solid #1E3A5F;
+    border-left: 5px solid var(--hero-color, #3B82F6);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin: 16px 0 24px 0;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4),
+                inset 0 1px 0 rgba(255,255,255,0.05);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
 
-/* Heatmap cell */
-.heatmap-cell {padding: 8px 12px; border-radius: 6px; text-align: center;
-    font-weight: 700; color: white; font-size: 0.85rem;}
+.hero-card::before {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 280px; height: 100%;
+    background: radial-gradient(circle, var(--hero-color-faint, rgba(59,130,246,0.10)), transparent 70%);
+    pointer-events: none;
+}
+
+.hero-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+.hero-verdict {
+    color: var(--hero-color, #3B82F6);
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    font-weight: 800;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.hero-narrative {
+    color: #F1F5F9;
+    font-size: 1.05rem;
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+/* ─── Tab section header ───────────────────────────────────────────── */
+.tab-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin: 32px 0 16px 0;
+}
+
+.tab-section-eyebrow {
+    color: #3B82F6;
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.tab-section-title {
+    color: #F1F5F9;
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+
+.tab-section-subtitle {
+    color: #94A3B8;
+    font-size: 0.88rem;
+    margin-top: 2px;
+}
+
+/* ─── Big KPI cards ────────────────────────────────────────────────── */
+.big-kpi-card {
+    background: linear-gradient(180deg, #1A2540 0%, #162136 100%);
+    border: 1px solid #1E3A5F;
+    border-top: 3px solid var(--kpi-color, #3B82F6);
+    border-radius: 12px;
+    padding: 16px 18px;
+    height: 100%;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.big-kpi-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0;
+    height: 1px; width: 100%;
+    background: linear-gradient(90deg, transparent, var(--kpi-color, #3B82F6), transparent);
+    opacity: 0.5;
+}
+
+.big-kpi-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--kpi-color, #3B82F6);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.big-kpi-label {
+    color: #94A3B8;
+    font-size: 0.72rem;
+    letter-spacing: 0.10em;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.big-kpi-value {
+    color: #F1F5F9;
+    font-size: 1.85rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+
+.big-kpi-sub {
+    color: var(--kpi-color, #94A3B8);
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-top: 6px;
+}
+
+/* ─── Insight cards ─────────────────────────────────────────────────── */
+.insight-card {
+    background: #1A2540;
+    border-left: 4px solid #3B82F6;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+    transition: transform 0.2s ease;
+}
+
+.insight-card:hover { transform: translateX(4px); }
+
+.insight-card.warn   { border-left-color: #F59E0B; background: rgba(245,158,11,0.06); }
+.insight-card.bad    { border-left-color: #EF4444; background: rgba(239,68,68,0.06); }
+.insight-card.good   { border-left-color: #10B981; background: rgba(16,185,129,0.06); }
+.insight-card.info   { border-left-color: #06B6D4; background: rgba(6,182,212,0.04); }
+
+.insight-title { color: #F1F5F9; font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
+.insight-body  { color: #CBD5E1; font-size: 0.85rem; line-height: 1.5; }
+
+/* ─── Callouts ─────────────────────────────────────────────────────── */
+.callout-good { background: rgba(16,185,129,0.10); border-left: 4px solid #10B981;
+                padding: 14px 18px; border-radius: 10px; color: #6EE7B7; }
+.callout-warn { background: rgba(245,158,11,0.10); border-left: 4px solid #F59E0B;
+                padding: 14px 18px; border-radius: 10px; color: #FCD34D; }
+.callout-bad  { background: rgba(239,68,68,0.10); border-left: 4px solid #EF4444;
+                padding: 14px 18px; border-radius: 10px; color: #FCA5A5; }
+.callout-info { background: rgba(59,130,246,0.10); border-left: 4px solid #3B82F6;
+                padding: 14px 18px; border-radius: 10px; color: #93C5FD; }
+
+/* ─── Buttons ──────────────────────────────────────────────────────── */
+.stButton > button {
+    background: #1A2540;
+    border: 1px solid #1E3A5F;
+    color: #F1F5F9;
+    border-radius: 10px;
+    padding: 8px 18px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+}
+
+.stButton > button:hover {
+    background: #1E3A5F;
+    border-color: #3B82F6;
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59,130,246,0.25);
+}
+
+.stButton > button:focus { box-shadow: 0 0 0 3px rgba(59,130,246,0.30); }
+
+/* ─── Inputs / Selects ─────────────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div,
+.stNumberInput > div > div > input {
+    background: #162136 !important;
+    color: #F1F5F9 !important;
+    border: 1px solid #1E3A5F !important;
+    border-radius: 8px !important;
+}
+
+/* ─── Sliders ──────────────────────────────────────────────────────── */
+.stSlider > div > div > div > div { background: #3B82F6; }
+
+/* ─── DataFrame ────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border: 1px solid #1E3A5F;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* ─── Metric (Streamlit native) ────────────────────────────────────── */
+[data-testid="stMetric"] {
+    background: linear-gradient(180deg, #1A2540 0%, #162136 100%);
+    border: 1px solid #1E3A5F;
+    border-radius: 10px;
+    padding: 12px 16px;
+    transition: transform 0.2s ease;
+}
+
+[data-testid="stMetric"]:hover { transform: translateY(-2px); }
+
+[data-testid="stMetricLabel"] { color: #94A3B8 !important; font-size: 0.78rem !important;
+                                  letter-spacing: 0.06em; font-weight: 600 !important; }
+[data-testid="stMetricValue"] { color: #F1F5F9 !important; font-weight: 800 !important;
+                                  font-size: 1.5rem !important; letter-spacing: -0.02em; }
+[data-testid="stMetricDelta"] { font-size: 0.85rem !important; font-weight: 500 !important; }
+
+/* ─── Radio (used for tab subnav) ──────────────────────────────────── */
+.stRadio > div { gap: 8px; flex-wrap: wrap; }
+
+.stRadio > div > label {
+    background: #162136;
+    border: 1px solid #1E3A5F;
+    border-radius: 10px;
+    padding: 6px 14px !important;
+    margin: 0 !important;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.stRadio > div > label:hover {
+    border-color: #3B82F6;
+    background: rgba(59,130,246,0.08);
+}
+
+/* ─── Expander ─────────────────────────────────────────────────────── */
+.streamlit-expanderHeader,
+[data-testid="stExpander"] > details > summary {
+    background: #162136 !important;
+    border-radius: 10px !important;
+    padding: 10px 16px !important;
+    border: 1px solid #1E3A5F !important;
+    color: #F1F5F9 !important;
+    font-weight: 600;
+}
+
+.streamlit-expanderHeader:hover { border-color: #3B82F6 !important; }
+
+/* ─── Plotly chart container ───────────────────────────────────────── */
+.js-plotly-plot {
+    background: transparent !important;
+    border-radius: 12px;
+    transition: transform 0.3s ease;
+}
+
+/* ─── Subtle scroll bar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0B1426; }
+::-webkit-scrollbar-thumb {
+    background: #1E3A5F;
+    border-radius: 6px;
+    border: 2px solid #0B1426;
+}
+::-webkit-scrollbar-thumb:hover { background: #3B82F6; }
+
+/* ─── Hide Streamlit hamburger / footer ────────────────────────────── */
+#MainMenu { visibility: hidden; }
+footer    { visibility: hidden; }
+header[data-testid="stHeader"] { background: transparent; }
+
+/* ─── Animation keyframes ──────────────────────────────────────────── */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.hero-card, .big-kpi-card, .insight-card {
+    animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+/* Stagger for KPI cards */
+.big-kpi-card { animation-delay: 0.05s; }
+
+/* ─── Dataframe headers ─────────────────────────────────────────────── */
+[data-testid="stDataFrame"] thead tr th {
+    background: #162136 !important;
+    color: #94A3B8 !important;
+    font-weight: 700 !important;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* ─── Number input arrows: subtle ──────────────────────────────────── */
+button[data-testid="stNumberInputStepUp"],
+button[data-testid="stNumberInputStepDown"] {
+    background: #1A2540 !important;
+    border: 1px solid #1E3A5F !important;
+}
+
 </style>
 """

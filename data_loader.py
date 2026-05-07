@@ -13,7 +13,7 @@ Falls back to recomputation only if Excel cells are blank.
 """
 
 from __future__ import annotations
-import hashlib
+import hashlib  # kept for future use
 import os
 from datetime import date, datetime
 from pathlib import Path
@@ -45,15 +45,29 @@ def get_excel_path() -> Path:
     return candidates[0]  # for error reporting
 
 
+def _excel_engine() -> str:
+    """Pick the fastest available Excel engine. Calamine is ~8x faster than openpyxl."""
+    try:
+        import python_calamine  # noqa: F401
+        return "calamine"
+    except ImportError:
+        return "openpyxl"
+
+
+_EXCEL_ENGINE = _excel_engine()
+
+
 def file_signature(path: Path) -> str:
-    """Hash + mtime composite — invalidates cache on any change."""
+    """Cheap composite signature: mtime + size. No MD5 cost.
+    
+    Streamlit's file_uploader writes to disk with a fresh mtime, so this is
+    sufficient to invalidate the cache after upload. Hashing 250KB on every
+    interaction was the old bottleneck.
+    """
     if not path.exists():
         return "missing"
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return f"{h.hexdigest()}_{path.stat().st_mtime:.0f}"
+    stat = path.stat()
+    return f"{int(stat.st_mtime)}_{stat.st_size}"
 
 
 def file_mtime_pretty(path: Path) -> str:
@@ -78,7 +92,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
 
     # ─── Instructions tab — parameters, benchmarks, financials, caps ───
     ins = pd.read_excel(path, sheet_name="Instructions & Assumptions",
-                        header=None, engine="openpyxl")
+                        header=None, engine=_EXCEL_ENGINE)
 
     # Section A: parameters (rows 4-8 in pandas 0-index)
     out["as_of_date"] = pd.Timestamp(ins.iloc[3, 1]).date()
@@ -163,7 +177,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
             continue
 
     # ─── Facility Master ─────────────────────────────────────
-    fm_raw = pd.read_excel(path, sheet_name="Facility Master", header=3, engine="openpyxl")
+    fm_raw = pd.read_excel(path, sheet_name="Facility Master", header=3, engine=_EXCEL_ENGINE)
     # Filter rows where S.No is numeric
     fm_raw = fm_raw[pd.to_numeric(fm_raw["S.No"], errors="coerce").notna()].copy()
     fm_raw["S.No"] = fm_raw["S.No"].astype(int)
@@ -210,7 +224,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     out["facility_master"] = pd.DataFrame(fm_records)
 
     # ─── Covenant Tracker ──────────────────────────────────
-    cov_raw = pd.read_excel(path, sheet_name="Covenant Tracker", header=2, engine="openpyxl")
+    cov_raw = pd.read_excel(path, sheet_name="Covenant Tracker", header=2, engine=_EXCEL_ENGINE)
     cov_records = []
     for _, r in cov_raw.iterrows():
         if pd.isna(r.get("Lender")) or pd.isna(r.get("Covenant")):
@@ -229,7 +243,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     out["covenants"] = pd.DataFrame(cov_records)
 
     # ─── Lender Summary (three-bucket) ─────────────────────
-    ls_raw = pd.read_excel(path, sheet_name="Lender Summary", header=None, engine="openpyxl")
+    ls_raw = pd.read_excel(path, sheet_name="Lender Summary", header=None, engine=_EXCEL_ENGINE)
     bucket1 = []  # rows 5-9 (0-indexed 4-8): TL, WC FB Cap, Total Debt, %
     for i in range(4, 9):
         if pd.notna(ls_raw.iloc[i, 0]):
@@ -288,7 +302,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     }
 
     # ─── Interest Schedule ─────────────────────────────────
-    int_raw = pd.read_excel(path, sheet_name="Interest Schedule", header=2, engine="openpyxl")
+    int_raw = pd.read_excel(path, sheet_name="Interest Schedule", header=2, engine=_EXCEL_ENGINE)
     int_records = []
     for _, r in int_raw.iterrows():
         sno = pd.to_numeric(r.get("S.No"), errors="coerce")
@@ -309,7 +323,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
 
     # Interest summary (rows 39-44 in 1-index, 38-43 in 0-index)
     int_summary_raw = pd.read_excel(path, sheet_name="Interest Schedule",
-                                    header=None, engine="openpyxl")
+                                    header=None, engine=_EXCEL_ENGINE)
     out["interest_summary"] = {
         "Bucket1_Interest": float(int_summary_raw.iloc[39, 8]) if pd.notna(int_summary_raw.iloc[39, 8]) else 0,
         "Bucket2_Commission": float(int_summary_raw.iloc[40, 8]) if pd.notna(int_summary_raw.iloc[40, 8]) else 0,
@@ -320,7 +334,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
 
     # ─── Repayment Schedule ────────────────────────────────
     rep_raw = pd.read_excel(path, sheet_name="Repayment Schedule",
-                            header=None, engine="openpyxl")
+                            header=None, engine=_EXCEL_ENGINE)
     rep_records = []
     for i in range(4, len(rep_raw)):
         period_end = rep_raw.iloc[i, 1]
@@ -358,7 +372,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
 
     # ─── Scenario Analysis ─────────────────────────────────
     sc_raw = pd.read_excel(path, sheet_name="Scenario Analysis",
-                           header=None, engine="openpyxl")
+                           header=None, engine=_EXCEL_ENGINE)
     out["scenario_inputs"] = {
         "Rate_Shock_BPS": [float(sc_raw.iloc[3, 2])*10000, float(sc_raw.iloc[3, 3])*10000, float(sc_raw.iloc[3, 4])*10000],
         "Spread_BPS": [float(sc_raw.iloc[4, 2])*10000, float(sc_raw.iloc[4, 3])*10000, float(sc_raw.iloc[4, 4])*10000],

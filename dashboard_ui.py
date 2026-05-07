@@ -94,16 +94,28 @@ def render_sidebar(data: Dict[str, Any]) -> Dict[str, Any]:
         uploaded = st.file_uploader("📤 Upload Updated Excel", type=["xlsx"],
                                      help="Replaces the bundled Excel. Changes apply instantly.",
                                      key="excel_upload")
+        # Guard: only process the upload ONCE per file. Streamlit persists the
+        # uploaded file across reruns within a session, so without this guard
+        # we'd save+reload+rerun in an infinite loop, making the dashboard
+        # appear to "load forever."
         if uploaded is not None:
-            from data_loader import save_uploaded_excel, force_reload
-            save_uploaded_excel(uploaded.getbuffer())
-            force_reload()
-            st.success(f"✅ Uploaded {uploaded.name}. Reloading...")
-            st.rerun()
+            file_id = getattr(uploaded, "file_id", uploaded.name + str(uploaded.size))
+            if st.session_state.get("_last_processed_upload") != file_id:
+                from data_loader import save_uploaded_excel, force_reload
+                with st.spinner(f"💾 Saving {uploaded.name}..."):
+                    save_uploaded_excel(uploaded.getbuffer())
+                st.session_state["_last_processed_upload"] = file_id
+                force_reload()
+                st.success(f"✅ {uploaded.name} loaded. Refreshing...")
+                st.rerun()
+            else:
+                st.caption(f"✓ Active: {uploaded.name}")
         
         if st.button("🔄 Reload from Excel", use_container_width=True):
             from data_loader import force_reload
             force_reload()
+            # Also clear the upload guard so a fresh upload of the same name re-processes
+            st.session_state.pop("_last_processed_upload", None)
             st.rerun()
         
         with st.expander("📋 Data Provenance", expanded=False):
@@ -432,6 +444,34 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
         render_big_kpi("DSCR", f"{dscr:.2f}x" if isinstance(dscr, (int, float)) else "—",
                         "vs ≥1.50x threshold",
                         color="#10B981" if dscr > 2.0 else "#F59E0B")
+    
+    # ─── Term Loan Maturity Profile (matches Excel Dashboard) ──────────
+    tl_mat = fm[(fm["Category"] == "FB-Term") & fm["Maturity_Date"].notna()]
+    if len(tl_mat) > 0:
+        earliest = tl_mat["Maturity_Date"].min()
+        farthest = tl_mat["Maturity_Date"].max()
+        # Find which lender has each
+        e_row = tl_mat[tl_mat["Maturity_Date"] == earliest].iloc[0]
+        f_row = tl_mat[tl_mat["Maturity_Date"] == farthest].iloc[0]
+        weighted_avg_remaining = (
+            (tl_mat["Maturity_Date"] - as_of).dt.days * tl_mat["Effective_OS"]
+        ).sum() / tl_mat["Effective_OS"].sum() / 365
+        
+        render_tab_header("MATURITY", "Term Loan Maturity Profile",
+                           "When each term loan finally amortises to zero.")
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            render_big_kpi("Earliest TL Maturity",
+                            earliest.strftime("%d-%b-%Y"),
+                            f"{e_row['Lender']} TL", color="#3B82F6")
+        with m2:
+            render_big_kpi("Farthest TL Maturity",
+                            farthest.strftime("%d-%b-%Y"),
+                            f"{f_row['Lender']} TL", color="#8B5CF6")
+        with m3:
+            render_big_kpi("Wtd Avg Remaining Life",
+                            f"{weighted_avg_remaining:.1f} yrs",
+                            "Weighted by outstanding", color="#06B6D4")
     
     # Annual repayment chart by lender
     render_tab_header("TIMELINE", "Annual Principal Repayment by Lender")

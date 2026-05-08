@@ -2,12 +2,18 @@
 Excel reader — JCL_Debt_Model_Final.xlsx is the single source of truth.
 
 Reads pre-computed values from the Excel:
-  - Effective Outstanding (col 15) — Excel handles cap allocation, sub-limits, USD INR caps
-  - Effective Rate p.a. (col 20) — Excel handles benchmark + spread
+  - Effective Outstanding (col "Eff Current O/S") — Excel handles cap allocation, sub-limits, USD INR caps
+  - Effective Rate p.a. (col "Eff Rate p.a.") — Excel handles benchmark + spread
   - Covenant actuals & status — read directly from Covenant Tracker
   - Lender Summary three-bucket totals — read from Lender Summary tab
   - Repayment Schedule — read quarterly schedule
   - Interest Schedule — read per-facility annual cost
+
+This loader is structured to be backward-compatible with the rest of the
+dashboard codebase: it preserves all the output dict keys and DataFrame
+column names that downstream modules (dashboard_ui, visualizations, gemini_ai,
+rule_based_ai, pdf_export, scenario_engine) consume — even when the underlying
+Excel layout has been restructured.
 
 Falls back to recomputation only if Excel cells are blank.
 """
@@ -58,12 +64,7 @@ _EXCEL_ENGINE = _excel_engine()
 
 
 def file_signature(path: Path) -> str:
-    """Cheap composite signature: mtime + size. No MD5 cost.
-    
-    Streamlit's file_uploader writes to disk with a fresh mtime, so this is
-    sufficient to invalidate the cache after upload. Hashing 250KB on every
-    interaction was the old bottleneck.
-    """
+    """Cheap composite signature: mtime + size. No MD5 cost."""
     if not path.exists():
         return "missing"
     stat = path.stat()
@@ -74,6 +75,28 @@ def file_mtime_pretty(path: Path) -> str:
     if not path.exists():
         return "FILE NOT FOUND"
     return datetime.fromtimestamp(path.stat().st_mtime).strftime("%d-%b-%Y %H:%M:%S")
+
+
+def _safe_float(v, default=0.0) -> float:
+    """Coerce to float; handle bool/string edge cases (e.g. row 35 'Promoter %' = 'True')."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return default
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "yes"):
+            return 1.0
+        if s in ("false", "no"):
+            return 0.0
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return default
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return default
 
 
 # ─── EXCEL PARSING ─────────────────────────────────────────────────────────
@@ -94,12 +117,12 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     ins = pd.read_excel(path, sheet_name="Instructions & Assumptions",
                         header=None, engine=_EXCEL_ENGINE)
 
-    # Section A: parameters (rows 4-8 in pandas 0-index)
+    # Section A: parameters (rows 3-7 in 0-index)
     out["as_of_date"] = pd.Timestamp(ins.iloc[3, 1]).date()
-    out["fx_rate"] = float(ins.iloc[4, 1])
-    out["use_full_util"] = bool(ins.iloc[5, 1])
-    out["days_in_year"] = int(ins.iloc[6, 1])
-    out["financial_basis"] = str(ins.iloc[7, 1])
+    out["fx_rate"] = _safe_float(ins.iloc[4, 1], 92.98)
+    out["use_full_util"] = bool(ins.iloc[5, 1]) if pd.notna(ins.iloc[5, 1]) else True
+    out["days_in_year"] = int(_safe_float(ins.iloc[6, 1], 365))
+    out["financial_basis"] = str(ins.iloc[7, 1]) if pd.notna(ins.iloc[7, 1]) else "Projected"
 
     # Section B: benchmark rates (rows 11-19)
     benchmark_label_to_key = {
@@ -125,7 +148,7 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
         except Exception:
             continue
 
-    # Section C: financials (rows 24-39)
+    # Section C: financials (rows 23-38)
     fin_label_map = {
         "EBITDA": "EBITDA",
         "Total Debt (Gross)": "Total Debt",
@@ -158,16 +181,17 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
             fy26_v = ins.iloc[i, 3]
             for tag, val in [("Active", active_v), ("FY24A", fy24_v), ("FY26E", fy26_v)]:
                 if pd.notna(val):
-                    if key in ("External Rating",):
+                    if key == "External Rating":
                         out["financials"][tag][key] = str(val)
                     else:
-                        out["financials"][tag][key] = float(val)
+                        # Promoter Shareholding "Active" col may show "True"; coerce safely
+                        out["financials"][tag][key] = _safe_float(val)
         except Exception:
             continue
 
-    # Section D: sanction-letter caps (rows 42-46)
+    # Section D: sanction-letter caps (rows 41-49)
     out["caps"] = {}
-    for i in range(41, 50):
+    for i in range(40, 50):
         try:
             label = ins.iloc[i, 0]
             val = ins.iloc[i, 1]
@@ -181,9 +205,17 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     # Filter rows where S.No is numeric
     fm_raw = fm_raw[pd.to_numeric(fm_raw["S.No"], errors="coerce").notna()].copy()
     fm_raw["S.No"] = fm_raw["S.No"].astype(int)
-    
+
+    # Helper: support both old ("Effective O/S") and new ("Eff Current O/S") column names
+    def _fm_get(r, *candidates, default=None):
+        for c in candidates:
+            if c in r.index and pd.notna(r[c]):
+                return r[c]
+        return default
+
     fm_records = []
     for _, r in fm_raw.iterrows():
+        eff_os_val = _fm_get(r, "Eff Current O/S", "Effective O/S", default=0.0)
         rec = {
             "S_No": int(r["S.No"]),
             "Lender": str(r["Lender"]),
@@ -191,25 +223,28 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
             "Category": str(r["Category"]),
             "Nature": str(r["Nature"]),
             "Sub_Limit_Flag": bool(r["Sub-Limit Flag"]) if pd.notna(r["Sub-Limit Flag"]) else False,
-            "WC_Cap_Group": str(r["WC Cap Group"]) if pd.notna(r["WC Cap Group"]) else None,
-            "WC_Cap_Amount": float(r["WC Cap Amount"]) if pd.notna(r["WC Cap Amount"]) else None,
+            # WC Cap Group / Amount removed in new model — preserve schema with None
+            "WC_Cap_Group": str(_fm_get(r, "WC Cap Group")) if _fm_get(r, "WC Cap Group") is not None else None,
+            "WC_Cap_Amount": float(_fm_get(r, "WC Cap Amount")) if _fm_get(r, "WC Cap Amount") is not None else None,
             "FD_Backed": bool(r["FD-Backed"]) if pd.notna(r["FD-Backed"]) else False,
+            # New flag for NFB Contingent classification (RBL SBLC for BC, RBL Capex LC)
+            "NFB_Contingent_Flag": bool(_fm_get(r, "NFB Contingent Flag", default=False)),
             "Bucket": int(r["Bucket"]) if pd.notna(r["Bucket"]) else 0,
             "Currency": str(r["Currency"]),
-            "Sanc_Orig_Ccy": float(r["Sanc Orig Ccy"]) if pd.notna(r["Sanc Orig Ccy"]) else 0.0,
-            "Sanction_INR": float(r["Sanc INR Cr"]) if pd.notna(r["Sanc INR Cr"]) else 0.0,
-            "Current_OS": float(r["Current O/S"]) if pd.notna(r["Current O/S"]) else 0.0,
-            "Effective_OS": float(r["Effective O/S"]) if pd.notna(r["Effective O/S"]) else 0.0,
-            "Util_Pct": float(r["Util %"]) if pd.notna(r["Util %"]) else 0.0,
-            "Headroom": float(r["Headroom"]) if pd.notna(r["Headroom"]) else 0.0,
+            "Sanc_Orig_Ccy": _safe_float(r["Sanc Orig Ccy"]),
+            "Sanction_INR": _safe_float(r["Sanc INR Cr"]),
+            "Current_OS": _safe_float(r["Current O/S"]),
+            "Effective_OS": _safe_float(eff_os_val),
+            "Util_Pct": _safe_float(r["Util %"]),
+            "Headroom": _safe_float(r["Headroom"]),
             "Benchmark": str(r["Benchmark"]) if pd.notna(r["Benchmark"]) else "",
-            "Spread_BPS": float(r["Spread"]) * 10000 if pd.notna(r["Spread"]) else 0.0,
-            "Effective_Rate": float(r["Eff Rate p.a."]) if pd.notna(r["Eff Rate p.a."]) else 0.0,
+            "Spread_BPS": _safe_float(r["Spread"]) * 10000,
+            "Effective_Rate": _safe_float(r["Eff Rate p.a."]),
             "Rate_Type": str(r["Rate Type"]) if pd.notna(r["Rate Type"]) else "",
-            "Moratorium_Months": int(r["Moratorium Mths"]) if pd.notna(r["Moratorium Mths"]) else 0,
+            "Moratorium_Months": int(_safe_float(r["Moratorium Mths"])),
             "Repayment_Frequency": str(r["Rep Frequency"]) if pd.notna(r["Rep Frequency"]) else "",
-            "Tenor_Months": int(r["Tenor Mths"]) if pd.notna(r["Tenor Mths"]) else 0,
-            "Num_Instalments": int(r["No of Instalments"]) if pd.notna(r["No of Instalments"]) else 0,
+            "Tenor_Months": int(_safe_float(r["Tenor Mths"])),
+            "Num_Instalments": int(_safe_float(r["No of Instalments"])),
             "Drawdown_Date": pd.Timestamp(r["Drawdown Date"]) if pd.notna(r["Drawdown Date"]) else pd.NaT,
             "Rep_Start_Date": pd.Timestamp(r["Rep Start Date"]) if pd.notna(r["Rep Start Date"]) else pd.NaT,
             "Maturity_Date": pd.Timestamp(r["Maturity Date"]) if pd.notna(r["Maturity Date"]) else pd.NaT,
@@ -243,62 +278,157 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     out["covenants"] = pd.DataFrame(cov_records)
 
     # ─── Lender Summary (three-bucket) ─────────────────────
+    # NEW LAYOUT (validated Excel V19):
+    #   Row 3 header:  Lender | Bucket 1: FB Mains | Bucket 2: NFB Mains | Sanctioned Debt | %
+    #   Rows 4-8:      per-lender rows
+    #   Row 9:         Grand Total | 720.7 | 600 | 1320.7 | 100%
+    #   Row 13 header: Lender | NFB Mains (B2) | NFB sub of FB-Main | Total NFB Contingent | %
+    #   Rows 14-18:    per-lender NFB Contingent rows
+    #   Row 19:        Grand Total | 600 | 215 | 815 | 100%
+    #   Row 23 header: Lender | FD-Backed | % Share
+    #   Rows 24-28:    per-lender FD rows
+    #   Row 29:        Grand Total | 100 | 100%
+    #   Rows 33-36:    Memo Hedge Notional table (RBL LER 20, SIB Forward 3 = 23)
     ls_raw = pd.read_excel(path, sheet_name="Lender Summary", header=None, engine=_EXCEL_ENGINE)
-    bucket1 = []  # rows 5-9 (0-indexed 4-8): TL, WC FB Cap, Total Debt, %
+
+    # Read Bucket 1 lender rows (4-8): FB Mains | NFB Mains | Sanctioned Debt | %
+    bucket1_data = {}     # lender → dict
     for i in range(4, 9):
         if pd.notna(ls_raw.iloc[i, 0]):
-            bucket1.append({
-                "Lender": str(ls_raw.iloc[i, 0]),
-                "TL_Sanctioned": float(ls_raw.iloc[i, 1]) if pd.notna(ls_raw.iloc[i, 1]) else 0,
-                "WC_FB_Cap": float(ls_raw.iloc[i, 2]) if pd.notna(ls_raw.iloc[i, 2]) else 0,
-                "Bucket1_Total_Debt": float(ls_raw.iloc[i, 3]) if pd.notna(ls_raw.iloc[i, 3]) else 0,
-            })
-    out["lender_bucket1"] = pd.DataFrame(bucket1)
+            lender = str(ls_raw.iloc[i, 0])
+            bucket1_data[lender] = {
+                "FB_Mains": _safe_float(ls_raw.iloc[i, 1]),
+                "NFB_Mains_B2": _safe_float(ls_raw.iloc[i, 2]),
+                "Sanctioned_Debt": _safe_float(ls_raw.iloc[i, 3]),
+                "Pct_Sanctioned": _safe_float(ls_raw.iloc[i, 4]),
+            }
 
-    # Bucket 2 — rows 15-19
-    bucket2 = []
+    # Read NFB Contingent lender rows (14-18): NFB Mains (B2) | sub of FB | Total | %
+    nfb_data = {}
     for i in range(14, 19):
         if pd.notna(ls_raw.iloc[i, 0]):
-            bucket2.append({
-                "Lender": str(ls_raw.iloc[i, 0]),
-                "LCs": float(ls_raw.iloc[i, 1]) if pd.notna(ls_raw.iloc[i, 1]) else 0,
-                "SBLCs": float(ls_raw.iloc[i, 2]) if pd.notna(ls_raw.iloc[i, 2]) else 0,
-                "BGs_memo": float(ls_raw.iloc[i, 3]) if pd.notna(ls_raw.iloc[i, 3]) else 0,
-                "Capex_LCs": float(ls_raw.iloc[i, 4]) if pd.notna(ls_raw.iloc[i, 4]) else 0,
-                "Bucket2_Total_NFB": float(ls_raw.iloc[i, 5]) if pd.notna(ls_raw.iloc[i, 5]) else 0,
-            })
-    out["lender_bucket2"] = pd.DataFrame(bucket2)
+            lender = str(ls_raw.iloc[i, 0])
+            nfb_data[lender] = {
+                "NFB_Mains_B2": _safe_float(ls_raw.iloc[i, 1]),
+                "NFB_Sub_of_FB": _safe_float(ls_raw.iloc[i, 2]),
+                "Total_NFB_Contingent": _safe_float(ls_raw.iloc[i, 3]),
+                "Pct_NFB": _safe_float(ls_raw.iloc[i, 4]),
+            }
 
-    # Bucket 3 — rows 25-29
-    bucket3 = []
+    # Read FD-Backed lender rows (24-28): FD-Backed | % Share
+    fd_data = {}
     for i in range(24, 29):
         if pd.notna(ls_raw.iloc[i, 0]):
-            bucket3.append({
-                "Lender": str(ls_raw.iloc[i, 0]),
-                "FD_Backed": float(ls_raw.iloc[i, 1]) if pd.notna(ls_raw.iloc[i, 1]) else 0,
-                "Hedge_Notional": float(ls_raw.iloc[i, 2]) if pd.notna(ls_raw.iloc[i, 2]) else 0,
-                "Bucket3_Total": float(ls_raw.iloc[i, 3]) if pd.notna(ls_raw.iloc[i, 3]) else 0,
-            })
-    out["lender_bucket3"] = pd.DataFrame(bucket3)
+            lender = str(ls_raw.iloc[i, 0])
+            fd_data[lender] = {
+                "FD_Backed": _safe_float(ls_raw.iloc[i, 1]),
+                "Pct_FD": _safe_float(ls_raw.iloc[i, 2]),
+            }
 
-    # Total Banking Exposure (row 44-48 lender concentration)
-    concentration = []
-    for i in range(43, 48):
-        if pd.notna(ls_raw.iloc[i, 0]):
-            concentration.append({
-                "Lender": str(ls_raw.iloc[i, 0]),
-                "Total_Banking_Exposure": float(ls_raw.iloc[i, 1]) if pd.notna(ls_raw.iloc[i, 1]) else 0,
-                "Pct_Sanctioned_Debt": float(ls_raw.iloc[i, 2]) if pd.notna(ls_raw.iloc[i, 2]) else 0,
-                "Pct_Banking_Exposure": float(ls_raw.iloc[i, 3]) if pd.notna(ls_raw.iloc[i, 3]) else 0,
-            })
-    out["lender_concentration"] = pd.DataFrame(concentration)
+    # Hedge notional memo table (rows 34-35)
+    hedge_data = {}
+    for i in range(33, 38):
+        try:
+            lender_v = ls_raw.iloc[i, 0]
+            facility_v = ls_raw.iloc[i, 1]
+            notional_v = ls_raw.iloc[i, 2]
+            if (pd.notna(lender_v) and pd.notna(notional_v)
+                and not str(lender_v).startswith(("Total", "Hedge", "Lender"))):
+                lender = str(lender_v)
+                hedge_data[lender] = hedge_data.get(lender, 0.0) + _safe_float(notional_v)
+        except Exception:
+            continue
 
-    # Headline totals (Lender Summary R34-R37)
+    # Compute TL_Sanctioned per lender from Facility Master
+    fm_df = out["facility_master"]
+    tl_per_lender = (
+        fm_df[fm_df["Category"] == "FB-Term"]
+        .groupby("Lender")["Sanction_INR"].sum().to_dict()
+    )
+
+    # Build Bucket 1 DataFrame (preserves OLD output keys for downstream compatibility)
+    # OLD keys: TL_Sanctioned, WC_FB_Cap, Bucket1_Total_Debt
+    bucket1_records = []
+    for lender, b1 in bucket1_data.items():
+        tl_sanc = float(tl_per_lender.get(lender, 0.0))
+        fb_mains = b1["FB_Mains"]
+        wc_fb_cap = max(0.0, fb_mains - tl_sanc)
+        # NOTE: Bucket1_Total_Debt under the new model = Sanctioned Debt (FB Mains + NFB Mains B2)
+        # This matches the dashboard's semantic of "Sanctioned Debt"
+        bucket1_records.append({
+            "Lender": lender,
+            "TL_Sanctioned": tl_sanc,
+            "WC_FB_Cap": wc_fb_cap,
+            "Bucket1_Total_Debt": b1["Sanctioned_Debt"],
+        })
+    out["lender_bucket1"] = pd.DataFrame(bucket1_records)
+
+    # Build Bucket 2 DataFrame
+    # OLD keys: LCs, SBLCs, BGs_memo, Capex_LCs, Bucket2_Total_NFB
+    # NEW model semantics:
+    #   LCs           = NFB Mains (Bucket 2 parent LCs)
+    #   Capex_LCs     = NFB sub of FB-Main (RBL SBLC for BC ₹190 + RBL Capex LC ₹25 = 215 for RBL)
+    #   SBLCs/BGs_memo = 0 (consolidated into LCs in the new model's NFB Mains line)
+    #   Bucket2_Total_NFB = Total NFB Contingent
+    bucket2_records = []
+    for lender, b2 in nfb_data.items():
+        bucket2_records.append({
+            "Lender": lender,
+            "LCs": b2["NFB_Mains_B2"],
+            "SBLCs": 0.0,
+            "BGs_memo": 0.0,
+            "Capex_LCs": b2["NFB_Sub_of_FB"],
+            "Bucket2_Total_NFB": b2["Total_NFB_Contingent"],
+        })
+    out["lender_bucket2"] = pd.DataFrame(bucket2_records)
+
+    # Build Bucket 3 DataFrame
+    # OLD keys: FD_Backed, Hedge_Notional, Bucket3_Total
+    bucket3_records = []
+    for lender, b3 in fd_data.items():
+        hedge = float(hedge_data.get(lender, 0.0))
+        bucket3_records.append({
+            "Lender": lender,
+            "FD_Backed": b3["FD_Backed"],
+            "Hedge_Notional": hedge,
+            "Bucket3_Total": b3["FD_Backed"],  # FD-Backed is the headline; hedge tracked separately
+        })
+    out["lender_bucket3"] = pd.DataFrame(bucket3_records)
+
+    # ─── Lender Concentration (computed — not present in new Excel layout) ───
+    # OLD keys: Lender, Total_Banking_Exposure, Pct_Sanctioned_Debt, Pct_Banking_Exposure
+    # Definition: Total Banking Exposure = Sanctioned Debt + NFB Contingent + FD-Backed
+    # (Mirrors the doughnut composition: 1320.7 + 815 + 100 = 2235.7)
+    sanc_total = sum(b["Sanctioned_Debt"] for b in bucket1_data.values()) or 1.0
+    be_per_lender = {}
+    for lender in bucket1_data:
+        sanc = bucket1_data[lender]["Sanctioned_Debt"]
+        nfb_cont = nfb_data.get(lender, {}).get("Total_NFB_Contingent", 0.0)
+        fd = fd_data.get(lender, {}).get("FD_Backed", 0.0)
+        be_per_lender[lender] = sanc + nfb_cont + fd
+    be_total = sum(be_per_lender.values()) or 1.0
+
+    concentration_records = []
+    for lender, be in be_per_lender.items():
+        concentration_records.append({
+            "Lender": lender,
+            "Total_Banking_Exposure": be,
+            "Pct_Sanctioned_Debt": bucket1_data[lender]["Sanctioned_Debt"] / sanc_total,
+            "Pct_Banking_Exposure": be / be_total,
+        })
+    out["lender_concentration"] = pd.DataFrame(concentration_records)
+
+    # ─── Headline totals ────────────────────────────────────
+    # OLD keys preserved. In the new model:
+    #   Bucket1_Sanctioned_Debt → Sanctioned Debt KPI = B1 + B2 = ₹1,320.7 (row 9 col 3)
+    #   Bucket2_NFB_Contingent  → NFB Contingent total = ₹815 (row 19 col 3)
+    #   Bucket3_Separate        → FD-Backed total = ₹100 (row 29 col 1)
+    #   Total_Banking_Exposure  → sum of all three = ₹2,235.7 (matches PPT doughnut)
     out["totals"] = {
-        "Bucket1_Sanctioned_Debt": float(ls_raw.iloc[33, 3]) if pd.notna(ls_raw.iloc[33, 3]) else 0,
-        "Bucket2_NFB_Contingent": float(ls_raw.iloc[34, 3]) if pd.notna(ls_raw.iloc[34, 3]) else 0,
-        "Bucket3_Separate": float(ls_raw.iloc[35, 3]) if pd.notna(ls_raw.iloc[35, 3]) else 0,
-        "Total_Banking_Exposure": float(ls_raw.iloc[36, 3]) if pd.notna(ls_raw.iloc[36, 3]) else 0,
+        "Bucket1_Sanctioned_Debt": _safe_float(ls_raw.iloc[9, 3], default=sum(b["Sanctioned_Debt"] for b in bucket1_data.values())),
+        "Bucket2_NFB_Contingent": _safe_float(ls_raw.iloc[19, 3], default=sum(n["Total_NFB_Contingent"] for n in nfb_data.values())),
+        "Bucket3_Separate": _safe_float(ls_raw.iloc[29, 1], default=sum(f["FD_Backed"] for f in fd_data.values())),
+        "Total_Banking_Exposure": be_total,
     }
 
     # ─── Interest Schedule ─────────────────────────────────
@@ -314,22 +444,22 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
             "Facility": str(r["Facility"]),
             "Category": str(r["Category"]),
             "Bucket": int(r["Bucket"]) if pd.notna(r["Bucket"]) else 0,
-            "Sanction_INR": float(r["Sanc INR Cr"]) if pd.notna(r["Sanc INR Cr"]) else 0,
-            "Effective_OS": float(r["Eff O/S"]) if pd.notna(r["Eff O/S"]) else 0,
-            "Effective_Rate": float(r["Eff Rate"]) if pd.notna(r["Eff Rate"]) else 0,
-            "Annual_Cost": float(r["Annual Interest/Comm. ₹Cr"]) if pd.notna(r["Annual Interest/Comm. ₹Cr"]) else 0,
+            "Sanction_INR": _safe_float(r["Sanc INR Cr"]),
+            "Effective_OS": _safe_float(r["Eff O/S"]),
+            "Effective_Rate": _safe_float(r["Eff Rate"]),
+            "Annual_Cost": _safe_float(r["Annual Interest/Comm. ₹Cr"]),
         })
     out["interest_schedule"] = pd.DataFrame(int_records)
 
-    # Interest summary (rows 39-44 in 1-index, 38-43 in 0-index)
+    # Interest summary (rows 39-43 in 0-index, col 8)
     int_summary_raw = pd.read_excel(path, sheet_name="Interest Schedule",
                                     header=None, engine=_EXCEL_ENGINE)
     out["interest_summary"] = {
-        "Bucket1_Interest": float(int_summary_raw.iloc[39, 8]) if pd.notna(int_summary_raw.iloc[39, 8]) else 0,
-        "Bucket2_Commission": float(int_summary_raw.iloc[40, 8]) if pd.notna(int_summary_raw.iloc[40, 8]) else 0,
-        "Bucket3_Interest": float(int_summary_raw.iloc[41, 8]) if pd.notna(int_summary_raw.iloc[41, 8]) else 0,
-        "Total_Interest_Commission": float(int_summary_raw.iloc[42, 8]) if pd.notna(int_summary_raw.iloc[42, 8]) else 0,
-        "Weighted_Avg_Cost": float(int_summary_raw.iloc[43, 8]) if pd.notna(int_summary_raw.iloc[43, 8]) else 0,
+        "Bucket1_Interest": _safe_float(int_summary_raw.iloc[39, 8]),
+        "Bucket2_Commission": _safe_float(int_summary_raw.iloc[40, 8]),
+        "Bucket3_Interest": _safe_float(int_summary_raw.iloc[41, 8]),
+        "Total_Interest_Commission": _safe_float(int_summary_raw.iloc[42, 8]),
+        "Weighted_Avg_Cost": _safe_float(int_summary_raw.iloc[43, 8]),
     }
 
     # ─── Repayment Schedule ────────────────────────────────
@@ -341,29 +471,37 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
         label = rep_raw.iloc[i, 2]
         if pd.isna(period_end):
             continue
+        # Trailing summary rows (e.g. "RBL Bank (excluded)", "YES Bank", "Total") have a
+        # text/numeric value in col 1 instead of a real date — skip them. Only accept
+        # values that pandas already recognises as datetime-like.
+        if not isinstance(period_end, (pd.Timestamp, datetime)):
+            continue
+        # Skip the trailing GRAND TOTAL row
+        if str(label).strip().upper().startswith("GRAND TOTAL"):
+            continue
         try:
             rec = {
                 "Period_End": pd.Timestamp(period_end),
                 "Period_Label": str(label) if pd.notna(label) else "",
-                "RBL_Opening": float(rep_raw.iloc[i, 3]) if pd.notna(rep_raw.iloc[i, 3]) else 0,
-                "RBL_Drawdown": float(rep_raw.iloc[i, 4]) if pd.notna(rep_raw.iloc[i, 4]) else 0,
-                "RBL_Principal": float(rep_raw.iloc[i, 5]) if pd.notna(rep_raw.iloc[i, 5]) else 0,
-                "RBL_Interest": float(rep_raw.iloc[i, 6]) if pd.notna(rep_raw.iloc[i, 6]) else 0,
-                "RBL_Closing": float(rep_raw.iloc[i, 7]) if pd.notna(rep_raw.iloc[i, 7]) else 0,
-                "YBL_Opening": float(rep_raw.iloc[i, 8]) if pd.notna(rep_raw.iloc[i, 8]) else 0,
-                "YBL_Drawdown": float(rep_raw.iloc[i, 9]) if pd.notna(rep_raw.iloc[i, 9]) else 0,
-                "YBL_Principal": float(rep_raw.iloc[i, 10]) if pd.notna(rep_raw.iloc[i, 10]) else 0,
-                "YBL_Interest": float(rep_raw.iloc[i, 11]) if pd.notna(rep_raw.iloc[i, 11]) else 0,
-                "YBL_Closing": float(rep_raw.iloc[i, 12]) if pd.notna(rep_raw.iloc[i, 12]) else 0,
-                "Bajaj_Opening": float(rep_raw.iloc[i, 13]) if pd.notna(rep_raw.iloc[i, 13]) else 0,
-                "Bajaj_Drawdown": float(rep_raw.iloc[i, 14]) if pd.notna(rep_raw.iloc[i, 14]) else 0,
-                "Bajaj_Principal": float(rep_raw.iloc[i, 15]) if pd.notna(rep_raw.iloc[i, 15]) else 0,
-                "Bajaj_Interest": float(rep_raw.iloc[i, 16]) if pd.notna(rep_raw.iloc[i, 16]) else 0,
-                "Bajaj_Closing": float(rep_raw.iloc[i, 17]) if pd.notna(rep_raw.iloc[i, 17]) else 0,
-                "Total_Principal": float(rep_raw.iloc[i, 18]) if pd.notna(rep_raw.iloc[i, 18]) else 0,
-                "Total_Interest": float(rep_raw.iloc[i, 19]) if pd.notna(rep_raw.iloc[i, 19]) else 0,
-                "Total_DS": float(rep_raw.iloc[i, 20]) if pd.notna(rep_raw.iloc[i, 20]) else 0,
-                "Combined_OS": float(rep_raw.iloc[i, 21]) if pd.notna(rep_raw.iloc[i, 21]) else 0,
+                "RBL_Opening": _safe_float(rep_raw.iloc[i, 3]),
+                "RBL_Drawdown": _safe_float(rep_raw.iloc[i, 4]),
+                "RBL_Principal": _safe_float(rep_raw.iloc[i, 5]),
+                "RBL_Interest": _safe_float(rep_raw.iloc[i, 6]),
+                "RBL_Closing": _safe_float(rep_raw.iloc[i, 7]),
+                "YBL_Opening": _safe_float(rep_raw.iloc[i, 8]),
+                "YBL_Drawdown": _safe_float(rep_raw.iloc[i, 9]),
+                "YBL_Principal": _safe_float(rep_raw.iloc[i, 10]),
+                "YBL_Interest": _safe_float(rep_raw.iloc[i, 11]),
+                "YBL_Closing": _safe_float(rep_raw.iloc[i, 12]),
+                "Bajaj_Opening": _safe_float(rep_raw.iloc[i, 13]),
+                "Bajaj_Drawdown": _safe_float(rep_raw.iloc[i, 14]),
+                "Bajaj_Principal": _safe_float(rep_raw.iloc[i, 15]),
+                "Bajaj_Interest": _safe_float(rep_raw.iloc[i, 16]),
+                "Bajaj_Closing": _safe_float(rep_raw.iloc[i, 17]),
+                "Total_Principal": _safe_float(rep_raw.iloc[i, 18]),
+                "Total_Interest": _safe_float(rep_raw.iloc[i, 19]),
+                "Total_DS": _safe_float(rep_raw.iloc[i, 20]),
+                "Combined_OS": _safe_float(rep_raw.iloc[i, 21]),
             }
             rep_records.append(rec)
         except Exception:
@@ -374,25 +512,25 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     sc_raw = pd.read_excel(path, sheet_name="Scenario Analysis",
                            header=None, engine=_EXCEL_ENGINE)
     out["scenario_inputs"] = {
-        "Rate_Shock_BPS": [float(sc_raw.iloc[3, 2])*10000, float(sc_raw.iloc[3, 3])*10000, float(sc_raw.iloc[3, 4])*10000],
-        "Spread_BPS": [float(sc_raw.iloc[4, 2])*10000, float(sc_raw.iloc[4, 3])*10000, float(sc_raw.iloc[4, 4])*10000],
-        "Util_Change_Pct": [float(sc_raw.iloc[5, 2])*100, float(sc_raw.iloc[5, 3])*100, float(sc_raw.iloc[5, 4])*100],
-        "EBITDA_Change_Pct": [float(sc_raw.iloc[6, 2])*100, float(sc_raw.iloc[6, 3])*100, float(sc_raw.iloc[6, 4])*100],
-        "Debt_Change_Pct": [float(sc_raw.iloc[7, 2])*100, float(sc_raw.iloc[7, 3])*100, float(sc_raw.iloc[7, 4])*100],
+        "Rate_Shock_BPS": [_safe_float(sc_raw.iloc[3, 2])*10000, _safe_float(sc_raw.iloc[3, 3])*10000, _safe_float(sc_raw.iloc[3, 4])*10000],
+        "Spread_BPS":     [_safe_float(sc_raw.iloc[4, 2])*10000, _safe_float(sc_raw.iloc[4, 3])*10000, _safe_float(sc_raw.iloc[4, 4])*10000],
+        "Util_Change_Pct":  [_safe_float(sc_raw.iloc[5, 2])*100, _safe_float(sc_raw.iloc[5, 3])*100, _safe_float(sc_raw.iloc[5, 4])*100],
+        "EBITDA_Change_Pct":[_safe_float(sc_raw.iloc[6, 2])*100, _safe_float(sc_raw.iloc[6, 3])*100, _safe_float(sc_raw.iloc[6, 4])*100],
+        "Debt_Change_Pct":  [_safe_float(sc_raw.iloc[7, 2])*100, _safe_float(sc_raw.iloc[7, 3])*100, _safe_float(sc_raw.iloc[7, 4])*100],
     }
     out["scenario_outputs"] = {
-        "Annual_B1_Interest": [float(sc_raw.iloc[11, 2]), float(sc_raw.iloc[11, 3]), float(sc_raw.iloc[11, 4])],
-        "DSCR_Stressed": [float(sc_raw.iloc[12, 2]), float(sc_raw.iloc[12, 3]), float(sc_raw.iloc[12, 4])],
-        "Total_Debt_EBITDA": [float(sc_raw.iloc[13, 2]), float(sc_raw.iloc[13, 3]), float(sc_raw.iloc[13, 4])],
-        "ICR": [float(sc_raw.iloc[14, 2]), float(sc_raw.iloc[14, 3]), float(sc_raw.iloc[14, 4])],
+        "Annual_B1_Interest": [_safe_float(sc_raw.iloc[11, 2]), _safe_float(sc_raw.iloc[11, 3]), _safe_float(sc_raw.iloc[11, 4])],
+        "DSCR_Stressed":      [_safe_float(sc_raw.iloc[12, 2]), _safe_float(sc_raw.iloc[12, 3]), _safe_float(sc_raw.iloc[12, 4])],
+        "Total_Debt_EBITDA":  [_safe_float(sc_raw.iloc[13, 2]), _safe_float(sc_raw.iloc[13, 3]), _safe_float(sc_raw.iloc[13, 4])],
+        "ICR":                [_safe_float(sc_raw.iloc[14, 2]), _safe_float(sc_raw.iloc[14, 3]), _safe_float(sc_raw.iloc[14, 4])],
     }
-    # Rate sensitivity (rows 23-29)
+    # Rate sensitivity table starts at row 23
     rate_sens = []
-    for i in range(23, 32):
+    for i in range(23, min(35, len(sc_raw))):
         try:
             label = sc_raw.iloc[i, 0]
             val = sc_raw.iloc[i, 1]
-            if pd.notna(label) and pd.notna(val):
+            if pd.notna(label) and pd.notna(val) and isinstance(val, (int, float)):
                 rate_sens.append({"Benchmark": str(label), "Delta_Interest_100bps": float(val)})
         except Exception:
             continue

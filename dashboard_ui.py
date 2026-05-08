@@ -272,19 +272,31 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
     # Three-bucket KPIs
     render_tab_header("AT A GLANCE", "Three-Bucket View",
                        "Sanctioned Debt is the primary debt total. Banking Exposure includes contingent NFB and FD-backed lines.")
+    # Decompose Sanctioned Debt into FB Mains (Bucket 1) and NFB Mains (Bucket 2 parents)
+    # for an accurate, self-updating subtitle.
+    fm_for_kpi = data["facility_master"]
+    fb_mains_total = fm_for_kpi[fm_for_kpi["Bucket"] == 1]["Sanction_INR"].sum()
+    nfb_mains_total = fm_for_kpi[fm_for_kpi["Bucket"] == 2]["Sanction_INR"].sum()
+    fb_main_count = int((fm_for_kpi["Bucket"] > 0).sum() + 0)  # mains across buckets 1/2/3
+    total_facility_count = len(fm_for_kpi)
+    nfb_subof_fb = max(0.0, t["Bucket2_NFB_Contingent"] - nfb_mains_total)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         render_big_kpi("Sanctioned Debt", inr(t["Bucket1_Sanctioned_Debt"]),
-                        f"Bucket 1 · TL ₹670.7 + WC FB ₹647", color="#3B82F6")
+                        f"B1 FB Mains ₹{fb_mains_total:.1f} + B2 NFB Mains ₹{nfb_mains_total:.0f}",
+                        color="#3B82F6")
     with c2:
         render_big_kpi("NFB Contingent", inr(t["Bucket2_NFB_Contingent"], 0),
-                        "Bucket 2 · LCs, SBLCs (parent only)", color="#8B5CF6")
+                        f"B2 ₹{nfb_mains_total:.0f} + sub-of-FB ₹{nfb_subof_fb:.0f} (off-B/S)",
+                        color="#8B5CF6")
     with c3:
         render_big_kpi("Separate Lines", inr(t["Bucket3_Separate"], 0),
-                        "Bucket 3 · FD-Backed + Hedge", color="#06B6D4")
+                        "Bucket 3 · FD-Backed only (RBL FDOD)",
+                        color="#06B6D4")
     with c4:
         render_big_kpi("Banking Exposure", inr(t["Total_Banking_Exposure"]),
-                        f"All buckets · 34 facilities", color="#F59E0B")
+                        f"All buckets · {total_facility_count} facilities",
+                        color="#F59E0B")
     
     # Health KPIs
     render_tab_header("HEALTH", "Cost & Compliance",
@@ -527,7 +539,7 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
         st.dataframe(rep_show[cols_show], use_container_width=True, hide_index=True)
     
     # Facility browser
-    with st.expander("🔍 Browse all 34 facilities", expanded=False):
+    with st.expander(f"🔍 Browse all {len(fm)} facilities", expanded=False):
         search = st.text_input("Search", "", key="fac_search_browser")
         df = fm.copy()
         if search:

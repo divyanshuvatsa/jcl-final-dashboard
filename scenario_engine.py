@@ -4,11 +4,11 @@ Excel base values to recompute covenants and interest dynamically.
 
 Excel ground-truth scenario outputs (from Scenario Analysis tab):
   Stress (+100bps, +25bps spread, +10% util, -15% EBITDA, +10% debt):
-    Annual B1 Interest: ₹122.16 Cr
-    DSCR: 1.5744x
+    Annual B1 Interest: ₹50.89 Cr
+    DSCR: 2.79x
   Severe (+200bps, +50bps spread, +20% util, -30% EBITDA, +25% debt):
-    Annual B1 Interest: ₹152.26 Cr
-    DSCR: 1.0313x
+    Annual B1 Interest: ₹62.96 Cr
+    DSCR: 1.92x
 
 This module replicates those outputs exactly for slider-driven what-if analysis.
 """

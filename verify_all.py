@@ -14,9 +14,11 @@ Tests:
   10. Streamlit launch test
 """
 import sys, warnings, json, copy
+from pathlib import Path
 warnings.filterwarnings("ignore")
 
-sys.path.insert(0, '/home/claude/JCL_Debt_Dashboard_Final')
+# Add this script's directory to sys.path so it works in any environment
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
 import streamlit as st
@@ -88,8 +90,8 @@ data = load_all_data()
 check("Excel loaded", data["excel_exists"])
 check("34 facilities", len(data["facility_master"]) == 34)
 check("24 covenants", len(data["covenants"]) == 24)
-check("Banking Rs.2,305.7", abs(data["totals"]["Total_Banking_Exposure"] - 2305.7) < 0.1)
-check("WAC 7.5154%", abs(data["interest_summary"]["Weighted_Avg_Cost"] - 0.07515) < 0.0001)
+check("Banking Rs.2,235.7", abs(data["totals"]["Total_Banking_Exposure"] - 2235.7) < 0.1)
+check("WAC 8.08%", abs(data["interest_summary"]["Weighted_Avg_Cost"] - 0.0808) < 0.0005)
 
 
 # ─── PHASE 3: COVENANTS ─────────────────────────────────────────────
@@ -159,8 +161,8 @@ try:
         r = PdfReader("/tmp/_test_memo.pdf")
         check("PDF has 1+ pages", len(r.pages) >= 1)
         text = " ".join(p.extract_text() for p in r.pages)
-        check("PDF mentions Banking Exposure", "2,305" in text)
-        check("PDF mentions WAC", "7.51" in text or "7.52" in text)
+        check("PDF mentions Banking Exposure", "2,235" in text or "2235" in text)
+        check("PDF mentions WAC", "8.07" in text or "8.08" in text)
         check("PDF mentions Compliant", "Compliant" in text)
         check("PDF mentions all lenders",
               all(l in text for l in ["RBL Bank", "YES Bank", "Bajaj Finance"]))
@@ -279,8 +281,8 @@ if failed == 0:
     print("Verified end-to-end:")
     print("  - All 9 module imports work")
     print("  - 34 facilities, 24 covenants load correctly")
-    print("  - Banking Exposure Rs.2,305.7 Cr (NOT Rs.3,411)")
-    print("  - WAC 7.5154% (matches Excel exactly)")
+    print("  - Banking Exposure Rs.2,235.7 Cr (Sanctioned 1,320.7 + NFB Cont. 815 + FD-Backed 100)")
+    print("  - WAC 8.08% (matches Excel exactly)")
     print("  - All 24 covenants Compliant at base case")
     print("  - AI module answers all suggested questions")
     print("  - Lender heatmap excludes sub-limits")

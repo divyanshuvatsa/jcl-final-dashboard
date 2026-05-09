@@ -175,13 +175,21 @@ def recompute_covenants(base_covenants: pd.DataFrame, financials: Dict[str, floa
 
 
 def recompute_interest(facility_master: pd.DataFrame, benchmark_rates: Dict[str, float],
-                       rate_shock_bps: float = 0, spread_shock_bps: float = 0) -> Dict[str, Any]:
+                       rate_shock_bps: float = 0, spread_shock_bps: float = 0,
+                       util_change_pct: float = 0) -> Dict[str, Any]:
     """
-    Apply rate/spread shocks and recompute annual cost per facility.
+    Apply rate/spread/utilisation shocks and recompute annual cost per facility.
     Returns same structure as Excel Interest Schedule.
+
+    Excel parity: matches Scenario Analysis E12 formula
+        SUMPRODUCT((Bucket=1) * EffOS * (1 + UtilChange) * (Rate + RateShock + SpreadShock))
+    Utilisation factor is applied ONLY to Bucket 1 (drawable FB economic debt). It does not
+    apply to Bucket 2 NFB commitments (priced on sanctioned face, not on drawn balance) nor
+    to Bucket 3 FDOD (already at 100% utilisation by structure).
     """
     rate_shock = rate_shock_bps / 10000
     spread_shock = spread_shock_bps / 10000
+    util_factor = 1.0 + (util_change_pct / 100.0)
     rows = []
     bucket1_int = 0.0; bucket2_comm = 0.0; bucket3_int = 0.0
     
@@ -198,36 +206,47 @@ def recompute_interest(facility_master: pd.DataFrame, benchmark_rates: Dict[str,
         else:
             shocked_rate = base_rate
         
-        annual_cost = eff_os * shocked_rate
-        
-        # Bucket aggregation (matches Excel Interest Summary logic)
-        # Bucket 1 = FB Sanctioned Debt: TL + WC FB on cap basis
+        # Bucket aggregation (matches Excel Interest Summary / Scenario Analysis logic)
+        # Bucket 1 = FB Sanctioned Debt: TL + WC FB. Utilisation factor applies here.
         if bucket == 1 and category in ("FB", "FB-Term", "FB-FCY"):
+            stressed_os = eff_os * util_factor
+            annual_cost = stressed_os * shocked_rate
             bucket1_int += annual_cost
-        # Bucket 2 = NFB Contingent (parent only — sub-limits go to NFB but excluded from B2)
+        # Bucket 2 = NFB Contingent (parent only). Commission on sanctioned face — no util.
         elif bucket == 2 and category == "NFB":
+            stressed_os = eff_os
+            annual_cost = stressed_os * shocked_rate
             bucket2_comm += annual_cost
-        # Bucket 3 = FD-backed FB + Hedge
+        # Bucket 3 = FD-backed FB. Already at 100% utilisation by structure — no util factor.
         elif bucket == 3 and category in ("FB-FDbacked",):
+            stressed_os = eff_os
+            annual_cost = stressed_os * shocked_rate
             bucket3_int += annual_cost
+        else:
+            stressed_os = eff_os
+            annual_cost = stressed_os * shocked_rate
         # Sub-limits in bucket 0 — count their commission but tag separately
-        
+
         rows.append({
             "S_No": r["S_No"], "Lender": r["Lender"], "Facility": r["Facility"],
             "Category": category, "Bucket": bucket,
-            "Effective_OS": eff_os, "Base_Rate": base_rate,
+            "Effective_OS": eff_os, "Stressed_OS": stressed_os,
+            "Base_Rate": base_rate,
             "Shocked_Rate": shocked_rate, "Annual_Cost": annual_cost,
         })
     
     total = bucket1_int + bucket2_comm + bucket3_int
     
-    # WAC of Sanctioned Debt = Bucket 1 interest / Bucket 1 outstanding
-    b1_os = facility_master[
+    # WAC of FB Economic Debt: blended rate = stressed B1 interest / stressed B1 outstanding.
+    # Both numerator and denominator carry the same util factor, so WAC isolates the rate
+    # impact (rate shock × spread shock) and is independent of utilisation by construction.
+    b1_os_base = facility_master[
         (facility_master["Bucket"] == 1) &
         (facility_master["Category"].isin(["FB", "FB-Term", "FB-FCY"]))
     ]["Effective_OS"].sum()
-    wac = (bucket1_int / b1_os) if b1_os > 0 else 0
-    
+    b1_os_stressed = b1_os_base * util_factor
+    wac = (bucket1_int / b1_os_stressed) if b1_os_stressed > 0 else 0
+
     return {
         "facility_breakdown": pd.DataFrame(rows),
         "Bucket1_Interest": bucket1_int,
@@ -235,21 +254,27 @@ def recompute_interest(facility_master: pd.DataFrame, benchmark_rates: Dict[str,
         "Bucket3_Interest": bucket3_int,
         "Total": total,
         "Weighted_Avg_Cost": wac,
+        "Bucket1_OS_Base": b1_os_base,
+        "Bucket1_OS_Stressed": b1_os_stressed,
     }
 
 
 def run_scenario(data: Dict[str, Any], rate_shock_bps: float, spread_shock_bps: float,
                  ebitda_change_pct: float, debt_change_pct: float = 0,
-                 basis: str = "FY26E") -> Dict[str, Any]:
-    """Full scenario run — returns base + stressed metrics."""
+                 basis: str = "FY26E", util_change_pct: float = 0) -> Dict[str, Any]:
+    """Full scenario run — returns base + stressed metrics.
+
+    Mirrors Excel Scenario Analysis tab: rate_shock + spread_shock + util_change drive
+    the Bucket-1 interest line; ebitda_change and debt_change drive the covenant ratios.
+    """
     fin = data["financials"][basis]
-    base_int = recompute_interest(data["facility_master"], data["benchmark_rates"], 0, 0)
+    base_int = recompute_interest(data["facility_master"], data["benchmark_rates"], 0, 0, 0)
     base_cov = recompute_covenants(data["covenants"], fin, 0, 0, 0)
-    
-    # Compute interest change pct from rate shock
+
+    # Compute interest change pct from rate + spread + util shocks combined
     if base_int["Bucket1_Interest"] > 0:
         stress_int = recompute_interest(data["facility_master"], data["benchmark_rates"],
-                                        rate_shock_bps, spread_shock_bps)
+                                        rate_shock_bps, spread_shock_bps, util_change_pct)
         int_change_pct = (stress_int["Bucket1_Interest"] / base_int["Bucket1_Interest"] - 1) * 100
     else:
         stress_int = base_int; int_change_pct = 0

@@ -151,36 +151,44 @@ Edit the Excel → click Reload → everything updates.
         c1, c2 = st.columns(2)
         with c1:
             if st.button("📈 Stress", use_container_width=True,
-                         help="Excel preset: +100bps, +25bps spread, -15% EBITDA, +10% debt"):
+                         help="Excel preset: +100bps, +25bps spread, +10% util, -15% EBITDA, +10% debt"):
                 st.session_state.update(rate_shock=100, spread_shock=25,
+                                        util_change=10,
                                         ebitda_change=-15, debt_change=10)
             if st.button("⛈ Severe", use_container_width=True,
-                         help="Excel preset: +200bps, +50bps spread, -30% EBITDA, +25% debt"):
+                         help="Excel preset: +200bps, +50bps spread, +20% util, -30% EBITDA, +25% debt"):
                 st.session_state.update(rate_shock=200, spread_shock=50,
+                                        util_change=20,
                                         ebitda_change=-30, debt_change=25)
         with c2:
             if st.button("📉 EBITDA -20%", use_container_width=True):
                 st.session_state.update(rate_shock=0, spread_shock=0,
+                                        util_change=0,
                                         ebitda_change=-20, debt_change=0)
             if st.button("🔄 Reset", use_container_width=True):
                 st.session_state.update(rate_shock=0, spread_shock=0,
+                                        util_change=0,
                                         ebitda_change=0, debt_change=0)
         
         for k, default in [("rate_shock", 0), ("spread_shock", 0),
+                          ("util_change", 0),
                           ("ebitda_change", 0), ("debt_change", 0)]:
             if k not in st.session_state:
                 st.session_state[k] = default
         
         rate_shock = st.slider("Rate Shock (bps)", -100, 300, step=25, key="rate_shock")
         spread_shock = st.slider("Spread Shock (bps)", 0, 200, step=25, key="spread_shock")
+        util_change = st.slider("Utilisation Change (%)", 0, 30, step=5, key="util_change",
+                                 help="Applied to Bucket 1 (drawable FB economic debt). "
+                                      "Excel parity: Stress = +10%, Severe = +20%.")
         ebitda_change = st.slider("EBITDA Change (%)", -40, 30, step=5, key="ebitda_change")
         debt_change = st.slider("Debt Change (%)", 0, 50, step=5, key="debt_change")
         
-        is_stressed = any([rate_shock, spread_shock, ebitda_change, debt_change])
+        is_stressed = any([rate_shock, spread_shock, util_change, ebitda_change, debt_change])
         if is_stressed:
             st.markdown(_html(f"""<div class='callout-warn'>
                 ⚠️ <b>Stress Active</b><br>
-                Rate {rate_shock:+d}bps · Spread {spread_shock:+d}bps · 
+                Rate {rate_shock:+d}bps · Spread {spread_shock:+d}bps · Util {util_change:+d}% · 
                 EBITDA {ebitda_change:+d}% · Debt {debt_change:+d}%
             </div>"""), unsafe_allow_html=True)
     
@@ -202,6 +210,7 @@ Edit the Excel → click Reload → everything updates.
         "basis": basis,
         "rate_shock": rate_shock,
         "spread_shock": spread_shock,
+        "util_change": util_change,
         "ebitda_change": ebitda_change,
         "debt_change": debt_change,
         "is_stressed": is_stressed,
@@ -245,7 +254,8 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
                                   controls["ebitda_change"],
                                   0, controls["debt_change"])
     int_calc = recompute_interest(data["facility_master"], data["benchmark_rates"],
-                                   controls["rate_shock"], controls["spread_shock"])
+                                   controls["rate_shock"], controls["spread_shock"],
+                                   controls.get("util_change", 0))
     
     t = data["totals"]
     isum = data["interest_summary"]
@@ -649,9 +659,19 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
     with c4: render_big_kpi("Breach", str(breach), "Action req'd", color="#EF4444" if breach else "#94A3B8")
     
     # ─── Headroom bar chart — most informative single chart ─────────
+    # Compute actual binding constraint dynamically (across all 24 covenants)
+    _hr = cov_df.copy()
+    _hr["_HR"] = pd.to_numeric(_hr["Headroom_Pct"], errors="coerce")
+    _hr_valid = _hr.dropna(subset=["_HR"])
+    if len(_hr_valid) > 0:
+        _tight = _hr_valid.loc[_hr_valid["_HR"].idxmin()]
+        _binding_text = (f"<b>{_tight['Covenant']}</b> is the binding constraint at "
+                         f"<b>+{_tight['_HR']:.0f}%</b> ({_tight['Lender']}).")
+    else:
+        _binding_text = "Headroom data unavailable."
     render_tab_header("HEADROOM", "Binding Covenants — Tightest Instance per Ratio",
                        "One bar per unique covenant type, showing the tightest lender's headroom. "
-                       "TOL/TNW is the binding constraint at +38%. Open the audit view below for all 24 instances.")
+                       f"{_binding_text} Open the audit view below for all 24 instances.")
     render_covenant_headroom_chart(cov_df, mode="tightest")
 
     with st.expander("📋 Full audit view — all instances by lender", expanded=False):
@@ -716,7 +736,8 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
 # ═══════════════════════════════════════════════════════════════════════
 def render_tab_scenarios(data: Dict[str, Any], controls: Dict[str, Any]):
     sc = run_scenario(data, controls["rate_shock"], controls["spread_shock"],
-                       controls["ebitda_change"], controls["debt_change"], controls["basis"])
+                       controls["ebitda_change"], controls["debt_change"], controls["basis"],
+                       util_change_pct=controls.get("util_change", 0))
     
     base_int = sc["base"]["interest"]
     stress_int = sc["stress"]["interest"]
@@ -726,8 +747,8 @@ def render_tab_scenarios(data: Dict[str, Any], controls: Dict[str, Any]):
     base_dscr = base_cov[base_cov["Covenant"] == "DSCR"]["Actual"].iloc[0]
     stress_dscr = stress_cov[stress_cov["Covenant"] == "DSCR"]["Actual"].iloc[0]
     
-    # Severe preset analysis (from Excel)
-    severe = run_scenario(data, 200, 50, -30, 25, controls["basis"])
+    # Severe preset analysis (from Excel — includes +20% utilisation factor)
+    severe = run_scenario(data, 200, 50, -30, 25, controls["basis"], util_change_pct=20)
     sev_breach = (severe["stress"]["covenants"]["Status"] == "Breach").sum()
     
     if sev_breach > 0:

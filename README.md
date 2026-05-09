@@ -2,18 +2,13 @@
 
 Real-time, fully-dynamic, Excel-driven debt and covenant monitoring dashboard for **Jindal Coke Limited**.
 
-## What's included (10 tabs)
+## What's included (5 tabs)
 
-1. **Overview** — three-bucket totals, KPIs, lender concentration donut
-2. **Repayment** — TL outstanding, FY-by-FY principal stack, upcoming renewals
-3. **Covenants** — all 24 covenants, attention items, status pills
-4. **Scenarios** — live stress sliders + Excel preset library
-5. **Heatmap** — lender × facility category exposure (free feature)
-6. **Rate Path** — 8-quarter RBI rate decision simulator (free feature)
-7. **Renewals** — 5-bucket priority calendar (≤30, 31-60, 61-90, 91-180, >180 days)
-8. **AI Analyst** — 10 rule-based answers + 4 proactive insight cards
-9. **Snapshots** — capture state, compare against past, JSON backup (NEW)
-10. **Export** — CSV downloads + **PDF board memo** (NEW)
+1. **Overview** — three-bucket totals, KPIs, lender concentration donut, facility cost breakdown
+2. **Covenants** — all 24 covenants, tightest-headroom chart, attention items, status pills
+3. **Schedule** — repayment timeline, FY-by-FY principal stack, 5-bucket renewal calendar
+4. **AI Analyst** — rule-based answers + proactive insight cards (optional Gemini integration)
+5. **Tools** — snapshots, CSV downloads, PDF board memo
 
 ## Architecture
 
@@ -53,7 +48,7 @@ Browse to `http://localhost:8501`.
 python3 verify_all.py
 ```
 
-Expected output: **46/46 PASSED** across 10 phases.
+Expected output: **47/47 PASSED** across 10 phases.
 
 ## What gets verified
 

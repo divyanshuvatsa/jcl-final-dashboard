@@ -13,6 +13,7 @@ from scenario_engine import recompute_covenants, run_scenario, recompute_interes
 import rule_based_ai as rba
 from visualizations import (
     render_covenant_headroom_chart, render_facility_cost_chart,
+    render_fb_rate_vs_wac_chart,
     render_lender_composition_stacked, render_repayment_timeline,
     render_renewal_timeline, render_scenario_comparison_chart,
 )
@@ -382,14 +383,22 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
         st.dataframe(merged, use_container_width=True, hide_index=True)
     
     # ─── Lender composition stacked bar ─────────────────────────────
-    render_tab_header("COMPOSITION", "Each Lender's Exposure Mix",
-                       "How each lender's exposure splits across facility categories.")
+    render_tab_header("COMPOSITION", "Each Lender's Sanctioned Capacity Mix",
+                       "How each lender's ₹1,320.7 Cr Sanctioned Debt splits across Term Loans, "
+                       "Working-Capital FB, and NFB umbrellas. Bars sum to the headline total.")
     render_lender_composition_stacked(data)
-    
-    # ─── Facility cost ranking ──────────────────────────────────────
-    render_tab_header("COST", "Facility-Level Cost vs Portfolio WAC",
-                       "Bars above the dashed line cost more than the portfolio average.")
+
+    # ─── Cost contribution (₹) — where the ₹49 Cr annual bill comes from ─
+    render_tab_header("COST", "Annual Cost Contribution by Facility",
+                       "Where the ₹49 Cr annual bill comes from. Bars sized by ₹ cost, not rate. "
+                       "Blue = interest on FB principal; Amber = commission on NFB sanctioned face.")
     render_facility_cost_chart(data)
+
+    # ─── FB rate comparison vs WAC — apples-to-apples ───────────────
+    render_tab_header("RATE", "FB Effective Rate vs Portfolio WAC",
+                       "Apples-to-apples interest-rate comparison. NFB commission rates excluded "
+                       "(commission and interest are different cost mechanics).")
+    render_fb_rate_vs_wac_chart(data)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -439,19 +448,26 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
     render_tab_header("LIQUIDITY", "Cash Flow Obligations")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_big_kpi("TL Outstanding", inr(tl_total_outstanding, 1),
-                        f"3 active term loans")
+        n_tl_total = (fm["Category"] == "FB-Term").sum()
+        n_tl_drawn = ((fm["Category"] == "FB-Term") & (fm["Effective_OS"] > 0)).sum()
+        n_tl_undrawn = n_tl_total - n_tl_drawn
+        sub_lbl = (f"{n_tl_drawn} drawn"
+                   + (f" · {n_tl_undrawn} undrawn" if n_tl_undrawn else ""))
+        render_big_kpi("TL Outstanding", inr(tl_total_outstanding, 1), sub_lbl)
     with c2:
         prin_12m = next_12m["Total_Principal"].sum()
         int_12m = next_12m["Total_Interest"].sum()
         render_big_kpi("Next 12 Months", inr(next_12m_ds, 1),
                         f"P {inr(prin_12m, 0)} + I {inr(int_12m, 0)}")
     with c3:
-        if peak_year is not None:
-            render_big_kpi("Peak Year", peak_year["FY_Label"],
-                            f"{inr(peak_year['Total_Prin'])} principal")
+        # Peak Year: use Total_DS (P+I) — matches the TIMELINE chart caption
+        # (previously used Total_Prin which gave FY32/FY33; now consistent with FY28 ₹77 Cr)
+        if len(fy_active):
+            peak_ds_year = fy_agg.loc[fy_agg["Total_DS"].idxmax()]
+            render_big_kpi("Peak DS Year", peak_ds_year["FY_Label"],
+                            f"{inr(peak_ds_year['Total_DS'])} debt service (P+I)")
         else:
-            render_big_kpi("Peak Year", "—", "")
+            render_big_kpi("Peak DS Year", "—", "")
     with c4:
         cov_df = recompute_covenants(data["covenants"], data["financials"][controls["basis"]],
                                        controls["ebitda_change"], 0, controls["debt_change"])
@@ -461,7 +477,10 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
                         color="#10B981" if dscr > 2.0 else "#F59E0B")
     
     # ─── Term Loan Maturity Profile (matches Excel Dashboard) ──────────
-    tl_mat = fm[(fm["Category"] == "FB-Term") & fm["Maturity_Date"].notna()]
+    # Filter to DRAWN TLs only — undrawn term loans (e.g. RBL TL ₹200 sanctioned but never
+    # disbursed) don't represent a real cash maturity obligation.
+    tl_mat = fm[(fm["Category"] == "FB-Term") & fm["Maturity_Date"].notna()
+                & (fm["Effective_OS"] > 0)]
     if len(tl_mat) > 0:
         earliest = tl_mat["Maturity_Date"].min()
         farthest = tl_mat["Maturity_Date"].max()
@@ -473,7 +492,8 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
         ).sum() / tl_mat["Effective_OS"].sum() / 365
         
         render_tab_header("MATURITY", "Term Loan Maturity Profile",
-                           "When each term loan finally amortises to zero.")
+                           "When each DRAWN term loan finally amortises to zero. "
+                           "Undrawn TL sanctions are excluded — no cash obligation until drawdown.")
         m1, m2, m3 = st.columns(3)
         with m1:
             render_big_kpi("Earliest TL Maturity",
@@ -488,21 +508,49 @@ def render_tab_repayment(data: Dict[str, Any], controls: Dict[str, Any]):
                             f"{weighted_avg_remaining:.1f} yrs",
                             "Weighted by outstanding", color="#06B6D4")
     
-    # Annual repayment chart by lender
-    render_tab_header("TIMELINE", "Annual Principal Repayment by Lender")
-    fy_chart = fy_agg[fy_agg["Total_Prin"] > 0].sort_values("FY_Label")
+    # Annual debt-service chart by lender — Principal stacked + Interest line overlay
+    render_tab_header("TIMELINE", "Annual Debt Service by Lender",
+                       "Stacked bars: principal repayment by lender. Line: total interest (FB+B3) due each FY.")
+    fy_chart = fy_agg[(fy_agg["Total_Prin"] > 0) | (fy_agg["Total_Int"] > 0)].sort_values("FY_Label")
     fig = go.Figure()
-    for lender, col, color in [("RBL Bank", "RBL", LENDER_COLORS["RBL Bank"]),
-                                ("YES Bank", "YBL", LENDER_COLORS["YES Bank"]),
-                                ("Bajaj Finance", "Bajaj", LENDER_COLORS["Bajaj Finance"])]:
-        fig.add_trace(go.Bar(name=lender, x=fy_chart["FY_Label"], y=fy_chart[col],
-                              marker_color=color,
-                              hovertemplate=f"<b>{lender}</b><br>%{{x}}<br>₹%{{y:.2f}} Cr<extra></extra>"))
+    # Stacked bars: principal by lender
+    for lender, col, color in [("YES Bank", "YBL", LENDER_COLORS["YES Bank"]),
+                                ("Bajaj Finance", "Bajaj", LENDER_COLORS["Bajaj Finance"]),
+                                ("RBL Bank", "RBL", LENDER_COLORS["RBL Bank"])]:
+        # Skip lenders with 0 across all FYs
+        if fy_chart[col].sum() <= 0:
+            continue
+        fig.add_trace(go.Bar(
+            name=f"{lender} Principal",
+            x=fy_chart["FY_Label"], y=fy_chart[col],
+            marker_color=color, opacity=0.95,
+            hovertemplate=f"<b>{lender} Principal</b><br>%{{x}}: ₹%{{y:.2f}} Cr<extra></extra>",
+        ))
+    # Overlay: total interest line
+    fig.add_trace(go.Scatter(
+        name="Interest (all)",
+        x=fy_chart["FY_Label"], y=fy_chart["Total_Int"],
+        mode="lines+markers",
+        line=dict(color="#F59E0B", width=2.5, dash="dot"),
+        marker=dict(size=7, color="#F59E0B"),
+        hovertemplate="<b>Interest</b><br>%{x}: ₹%{y:.2f} Cr<extra></extra>",
+        yaxis="y",
+    ))
+    # Total DS callouts as text annotations above each bar
+    for _, r in fy_chart.iterrows():
+        fig.add_annotation(
+            x=r["FY_Label"], y=r["Total_DS"],
+            text=f"₹{r['Total_DS']:.0f}",
+            showarrow=False, yshift=12,
+            font=dict(color="#F1F5F9", size=10, family="Inter, sans-serif"),
+        )
     fig.update_layout(**CHART_LAYOUT, height=420, barmode="stack",
                        xaxis=dict(title="Financial Year"),
-                       yaxis=dict(title="Principal (₹ Cr)", gridcolor="#334155"),
+                       yaxis=dict(title="Cash Outflow (₹ Cr)", gridcolor="#334155"),
                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18))
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("Numbers above each FY bar = total debt service (principal + interest) for that year. "
+               "Peak FY: FY28 ~₹77 Cr.")
     
     # ─── Cumulative TL outstanding running down over time ───────────
     render_tab_header("RUNDOWN", "Term Loan Outstanding Over Time",
@@ -601,9 +649,15 @@ def render_tab_covenants(data: Dict[str, Any], controls: Dict[str, Any]):
     with c4: render_big_kpi("Breach", str(breach), "Action req'd", color="#EF4444" if breach else "#94A3B8")
     
     # ─── Headroom bar chart — most informative single chart ─────────
-    render_tab_header("HEADROOM", "All 24 Covenants by Compliance Buffer",
-                       "Bars further right = more compliant. Dashed lines mark Watch and Breach zones.")
-    render_covenant_headroom_chart(cov_df)
+    render_tab_header("HEADROOM", "Binding Covenants — Tightest Instance per Ratio",
+                       "One bar per unique covenant type, showing the tightest lender's headroom. "
+                       "TOL/TNW is the binding constraint at +38%. Open the audit view below for all 24 instances.")
+    render_covenant_headroom_chart(cov_df, mode="tightest")
+
+    with st.expander("📋 Full audit view — all instances by lender", expanded=False):
+        st.caption("Same data, broken out per lender (22 numeric ratios + 2 credit-rating covenants = 24 total). "
+                   "Useful for verifying that no single lender's threshold is being inadvertently relaxed.")
+        render_covenant_headroom_chart(cov_df, mode="all")
     
     # Watch items
     attention = cov_df[cov_df["Status"].isin(["Breach", "Near Breach", "Watch"])]
@@ -788,14 +842,16 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
     
     # ─── Interactive filter controls ────────────────────────────────
     render_tab_header("FILTER", "Refine the View",
-                       "Pick urgency bucket and lenders. Timeline + action list update together.")
+                       "Pick urgency bucket and lenders. Timeline + action list update together. "
+                       "Sub-limits and Term Loans are excluded from the renewal Gantt by default — "
+                       "they are surfaced separately below.")
     
     fc1, fc2 = st.columns([2, 3])
     
     with fc1:
         urgency_filter = st.radio(
             "Urgency Bucket",
-            ["All", "≤30 days", "31-60 days", "61-90 days", "91-180 days", ">180 days"],
+            ["All", "Overdue", "≤30 days", "31-60 days", "61-90 days", "91-180 days", ">180 days"],
             horizontal=False,
             key="renewal_urgency_filter",
         )
@@ -808,13 +864,17 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
             default=all_lenders,
             key="renewal_lender_filter",
         )
+        if not selected_lenders:
+            st.caption("⚠ No lenders selected — defaulting to all.")
         
         # Quick stats for selection
         st.markdown("##### KPIs (within filter)")
     
     # Apply filters
     filtered = fm.copy()
-    if urgency_filter == "≤30 days":
+    if urgency_filter == "Overdue":
+        filtered = filtered[filtered["days_to_expiry"] < 0]
+    elif urgency_filter == "≤30 days":
         filtered = filtered[filtered["days_to_expiry"].between(0, 30)]
     elif urgency_filter == "31-60 days":
         filtered = filtered[filtered["days_to_expiry"].between(31, 60)]
@@ -828,8 +888,8 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
     if selected_lenders:
         filtered = filtered[filtered["Lender"].isin(selected_lenders)]
     
-    # ─── Bucket KPIs (always show all 5, but highlight filter) ──────
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # ─── Bucket KPIs (now 6 buckets, including Overdue) ─────────────
+    c0, c1, c2, c3, c4, c5 = st.columns(6)
     def _kpi_with_filter(col, label, df, color, key):
         is_active = (urgency_filter == key) or (urgency_filter == "All")
         opacity = "1.0" if is_active else "0.4"
@@ -844,6 +904,7 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
                     {f"₹{value:,.1f} Cr" if count else "—"}
                 </div></div>"""), unsafe_allow_html=True)
     
+    _kpi_with_filter(c0, "Overdue", expired, "#7F1D1D", "Overdue")
     _kpi_with_filter(c1, "≤30 days", next_30, "#EF4444", "≤30 days")
     _kpi_with_filter(c2, "31-60 days", next_60, "#F59E0B", "31-60 days")
     _kpi_with_filter(c3, "61-90 days", next_90, "#3B82F6", "61-90 days")
@@ -851,105 +912,150 @@ def render_tab_renewals(data: Dict[str, Any], controls: Dict[str, Any]):
     _kpi_with_filter(c5, ">180 days", later, "#10B981", ">180 days")
     
     # ─── Combined integrated view: timeline + actions side-by-side ─
+    # Renewal-relevant view: parents only (sub-limits ride the parent's renewal),
+    # and exclude Term Loans (they amortise — they don't renew).
+    renewal_view = filtered[
+        (~filtered["Sub_Limit_Flag"]) &
+        (filtered["Category"] != "FB-Term")
+    ].copy()
+    
     render_tab_header("INTEGRATED VIEW",
-                       f"Timeline + Actions for {len(filtered)} Facilities",
-                       "Hover any bar for full detail. Action cards mirror the timeline order.")
+                       f"Renewal Timeline — {len(renewal_view)} Parent Facilities",
+                       "Sub-limits ride their parent's renewal cycle (excluded). Term Loans amortise rather than "
+                       "renew (shown separately below). Hover any bar for full detail.")
     
+    if len(renewal_view) == 0:
+        st.info("No renewal-bearing facilities match the current filter. Adjust above to see more.")
+        # Still drop into Action Items for any term-loan or sub-limit context
+    else:
+        # Sort by urgency
+        renewal_view = renewal_view.sort_values("days_to_expiry")
+        fdf = renewal_view.copy()
+        fdf["label"] = fdf["Lender"] + " — " + fdf["Facility"]
+        fdf["expiry_str"] = fdf["Validity_Date"].dt.strftime("%d-%b-%Y")
+        
+        def _color(d):
+            if d < 0: return "#7F1D1D"  # dark red for expired
+            if d <= 30: return "#EF4444"
+            if d <= 60: return "#F59E0B"
+            if d <= 90: return "#3B82F6"
+            if d <= 180: return "#8B5CF6"
+            return "#64748B"
+        
+        def _action(d):
+            if d < 0: return "🚨 OVERDUE — contact lender now"
+            if d <= 30: return "🔴 Submit renewal request"
+            if d <= 60: return "🟠 Begin renewal preparation"
+            if d <= 90: return "🔵 Schedule discussions"
+            if d <= 180: return "🟣 Monitor & plan"
+            return "⚪ Routine monitoring"
+        
+        fdf["color"] = fdf["days_to_expiry"].apply(_color)
+        fdf["action"] = fdf["days_to_expiry"].apply(_action)
+        
+        fig = go.Figure()
+        
+        # Background urgency zones — extend the >180 zone to cover the whole right side
+        max_day = max(200, fdf["days_to_expiry"].max() + 80)
+        min_day = min(-10, fdf["days_to_expiry"].min() - 10)
+        fig.add_vrect(x0=min_day, x1=0, fillcolor="rgba(127,29,29,0.18)", line_width=0, layer="below")
+        fig.add_vrect(x0=0, x1=30, fillcolor="rgba(239,68,68,0.10)", line_width=0, layer="below")
+        fig.add_vrect(x0=30, x1=60, fillcolor="rgba(245,158,11,0.08)", line_width=0, layer="below")
+        fig.add_vrect(x0=60, x1=90, fillcolor="rgba(59,130,246,0.06)", line_width=0, layer="below")
+        fig.add_vrect(x0=90, x1=180, fillcolor="rgba(139,92,246,0.05)", line_width=0, layer="below")
+        fig.add_vrect(x0=180, x1=max_day, fillcolor="rgba(100,116,139,0.04)", line_width=0, layer="below")
+        
+        fig.add_trace(go.Bar(
+            x=fdf["days_to_expiry"],
+            y=fdf["label"],
+            orientation="h",
+            marker=dict(color=fdf["color"].tolist(),
+                         line=dict(color="#0F172A", width=0.5)),
+            text=[f"{d}d · {date} · ₹{san:.1f} Cr"
+                  for d, date, san in zip(fdf["days_to_expiry"], fdf["expiry_str"], fdf["Sanction_INR"])],
+            textposition="outside",
+            textfont=dict(size=10, color="#F1F5F9"),
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "📅 Expires: %{customdata[0]}<br>"
+                "⏱ Days to expiry: %{x}<br>"
+                "💰 Sanction: ₹%{customdata[1]:.1f} Cr<br>"
+                "📋 Category: %{customdata[2]}<br>"
+                "🎯 %{customdata[3]}<extra></extra>"
+            ),
+            customdata=fdf[["expiry_str", "Sanction_INR", "Category", "action"]].values,
+            showlegend=False,
+        ))
+        
+        for d, color in [(0, "#94A3B8"), (30, "#EF4444"), (60, "#F59E0B"),
+                          (90, "#3B82F6"), (180, "#8B5CF6")]:
+            fig.add_vline(x=d, line=dict(color=color, width=1, dash="dot"))
+        
+        chart_height = max(360, 32 * len(fdf))
+        fig.update_layout(
+            height=chart_height,
+            plot_bgcolor="#0F172A", paper_bgcolor="#0F172A",
+            font=dict(color="#F1F5F9", family="Inter, sans-serif"),
+            xaxis=dict(
+                title="Days to Expiry (negative = overdue)",
+                gridcolor="#334155", color="#94A3B8",
+                range=[min_day, max_day],
+            ),
+            yaxis=dict(autorange="reversed", color="#F1F5F9"),
+            margin=dict(l=20, r=200, t=20, b=60),
+            showlegend=False,
+            transition=dict(duration=400, easing="cubic-in-out"),
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        
+        st.markdown(
+            "<div style='display:flex;gap:18px;justify-content:center;font-size:0.82rem;"
+            "color:#94A3B8;margin-top:-8px;flex-wrap:wrap;'>"
+            "<span>🩸 Overdue</span>"
+            "<span>🔴 ≤30 days · urgent</span>"
+            "<span>🟠 31-60 · high</span>"
+            "<span>🔵 61-90 · medium</span>"
+            "<span>🟣 91-180 · low</span>"
+            "<span>⚫ >180 · monitor</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    
+    # ─── Term Loan maturity sub-section (separate, since TLs amortise) ──
+    tl_in_filter = filtered[filtered["Category"] == "FB-Term"]
+    if len(tl_in_filter) > 0:
+        render_tab_header("TERM LOAN MATURITIES",
+                           f"{len(tl_in_filter)} Term Loan(s) — Amortise Rather Than Renew",
+                           "Final maturity dates per sanction letter. Repayment cadence is on the Repayment tab.")
+        for _, r in tl_in_filter.sort_values("days_to_expiry").iterrows():
+            mat_date = r.get("Maturity_Date") or r["Validity_Date"]
+            days_to_mat = (mat_date - as_of).days if pd.notna(mat_date) else None
+            yrs = days_to_mat / 365.25 if days_to_mat else None
+            st.markdown(_html(f"""<div style='background:rgba(59,130,246,0.05);
+                              border-left:4px solid #3B82F6;border-radius:12px;
+                              padding:12px 18px;margin-bottom:6px;'>
+                <div style='display:flex;justify-content:space-between;align-items:center;'>
+                    <div>
+                        <span style='color:#3B82F6;font-size:0.7rem;font-weight:700;letter-spacing:0.06em;'>TERM LOAN</span>
+                        <span style='color:#F1F5F9;font-size:1rem;margin-left:8px;'>{r['Lender']} — {r['Facility']}</span>
+                        <div style='color:#94A3B8;font-size:0.78rem;margin-top:2px;'>
+                            Sanction: ₹{r['Sanction_INR']:.1f} Cr · O/S: ₹{r['Effective_OS']:.1f} Cr
+                        </div>
+                    </div>
+                    <div style='text-align:right;'>
+                        <div style='color:#94A3B8;font-size:0.7rem;letter-spacing:0.06em;'>FINAL MATURITY</div>
+                        <div style='color:#F1F5F9;font-size:1rem;font-weight:700;'>
+                            {mat_date.strftime('%d-%b-%Y') if pd.notna(mat_date) else '—'}
+                        </div>
+                        <div style='color:#3B82F6;font-size:0.85rem;'>
+                            {f'{yrs:.1f} years remaining' if yrs is not None else '—'}
+                        </div>
+                    </div>
+                </div></div>"""), unsafe_allow_html=True)
+    
+    # If no facilities at all (renewal_view + tl_in_filter both empty), early-exit
     if len(filtered) == 0:
-        st.info("No facilities match the current filter. Adjust above to see more.")
         return
-    
-    # Sort by urgency
-    filtered = filtered.sort_values("days_to_expiry")
-    
-    # ─── Rich timeline with action labels embedded ──────────────────
-    fdf = filtered.copy()
-    fdf["label"] = fdf["Lender"] + " — " + fdf["Facility"]
-    fdf["expiry_str"] = fdf["Validity_Date"].dt.strftime("%d-%b-%Y")
-    
-    def _color(d):
-        if d < 0: return "#7F1D1D"  # dark red for expired
-        if d <= 30: return "#EF4444"
-        if d <= 60: return "#F59E0B"
-        if d <= 90: return "#3B82F6"
-        if d <= 180: return "#8B5CF6"
-        return "#64748B"
-    
-    def _action(d):
-        if d < 0: return "🚨 OVERDUE — contact lender now"
-        if d <= 30: return "🔴 Submit renewal request"
-        if d <= 60: return "🟠 Begin renewal preparation"
-        if d <= 90: return "🔵 Schedule discussions"
-        if d <= 180: return "🟣 Monitor & plan"
-        return "⚪ Routine monitoring"
-    
-    fdf["color"] = fdf["days_to_expiry"].apply(_color)
-    fdf["action"] = fdf["days_to_expiry"].apply(_action)
-    
-    fig = go.Figure()
-    
-    # Background urgency zones
-    fig.add_vrect(x0=0, x1=30, fillcolor="rgba(239,68,68,0.10)", line_width=0, layer="below")
-    fig.add_vrect(x0=30, x1=60, fillcolor="rgba(245,158,11,0.08)", line_width=0, layer="below")
-    fig.add_vrect(x0=60, x1=90, fillcolor="rgba(59,130,246,0.06)", line_width=0, layer="below")
-    fig.add_vrect(x0=90, x1=180, fillcolor="rgba(139,92,246,0.05)", line_width=0, layer="below")
-    fig.add_vrect(x0=180, x1=400, fillcolor="rgba(100,116,139,0.04)", line_width=0, layer="below")
-    
-    fig.add_trace(go.Bar(
-        x=fdf["days_to_expiry"],
-        y=fdf["label"],
-        orientation="h",
-        marker=dict(color=fdf["color"].tolist(),
-                     line=dict(color="#0F172A", width=0.5)),
-        text=[f"{d}d · {date} · ₹{san:.1f} Cr"
-              for d, date, san in zip(fdf["days_to_expiry"], fdf["expiry_str"], fdf["Sanction_INR"])],
-        textposition="outside",
-        textfont=dict(size=10, color="#F1F5F9"),
-        hovertemplate=(
-            "<b>%{y}</b><br>"
-            "📅 Expires: %{customdata[0]}<br>"
-            "⏱ Days to expiry: %{x}<br>"
-            "💰 Sanction: ₹%{customdata[1]:.1f} Cr<br>"
-            "📋 Category: %{customdata[2]}<br>"
-            "🎯 %{customdata[3]}<extra></extra>"
-        ),
-        customdata=fdf[["expiry_str", "Sanction_INR", "Category", "action"]].values,
-        showlegend=False,
-    ))
-    
-    for d, color in [(0, "#94A3B8"), (30, "#EF4444"), (60, "#F59E0B"),
-                      (90, "#3B82F6"), (180, "#8B5CF6")]:
-        fig.add_vline(x=d, line=dict(color=color, width=1, dash="dot"))
-    
-    chart_height = max(360, 28 * len(fdf))
-    fig.update_layout(
-        height=chart_height,
-        plot_bgcolor="#0F172A", paper_bgcolor="#0F172A",
-        font=dict(color="#F1F5F9", family="Inter, sans-serif"),
-        xaxis=dict(
-            title="Days to Expiry (negative = expired)",
-            gridcolor="#334155", color="#94A3B8",
-            range=[min(-10, fdf["days_to_expiry"].min() - 10),
-                    max(200, fdf["days_to_expiry"].max() + 80)],
-        ),
-        yaxis=dict(autorange="reversed", color="#F1F5F9"),
-        margin=dict(l=20, r=200, t=20, b=60),
-        showlegend=False,
-        transition=dict(duration=400, easing="cubic-in-out"),
-    )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    
-    st.markdown(
-        "<div style='display:flex;gap:18px;justify-content:center;font-size:0.82rem;"
-        "color:#94A3B8;margin-top:-8px;flex-wrap:wrap;'>"
-        "<span>🔴 ≤30 days · urgent</span>"
-        "<span>🟠 31-60 · high</span>"
-        "<span>🔵 61-90 · medium</span>"
-        "<span>🟣 91-180 · low</span>"
-        "<span>⚫ >180 · monitor</span>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
     
     # ─── Action cards (filtered, same order as timeline) ────────────
     render_tab_header("ACTION ITEMS",

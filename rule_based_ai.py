@@ -87,16 +87,22 @@ def answer_tightest_covenant(data: Dict[str, Any], cov_df: pd.DataFrame) -> str:
 
 def answer_wac(data: Dict[str, Any]) -> str:
     isum = data["interest_summary"]
+    fm = data["facility_master"]
+    # Bucket 1 effective outstanding — the actual WAC denominator
+    b1_os = fm[(fm["Bucket"] == 1) &
+               (fm["Category"].isin(["FB", "FB-Term", "FB-FCY"]))]["Effective_OS"].sum()
     return (f"**💰 Cost of Debt Summary**\n\n"
             f"- **Weighted Avg Cost of Sanctioned Debt: {isum['Weighted_Avg_Cost']*100:.2f}%**\n"
             f"- Bucket 1 Interest (Sanctioned Debt): {_inr(isum['Bucket1_Interest'])}\n"
             f"- Bucket 2 Commission (NFB Contingent): {_inr(isum['Bucket2_Commission'])}\n"
             f"- Bucket 3 Interest (Separate Lines): {_inr(isum['Bucket3_Interest'])}\n"
             f"- **Total Annual Interest + Commission: {_inr(isum['Total_Interest_Commission'])}**\n\n"
-            f"WAC is computed as Bucket 1 interest divided by Bucket 1 outstanding "
-            f"({_inr(isum['Bucket1_Interest'])} / "
-            f"{_inr(data['totals']['Bucket1_Sanctioned_Debt'])} = "
-            f"{isum['Weighted_Avg_Cost']*100:.2f}%).")
+            f"WAC is computed as Bucket 1 interest divided by Bucket 1 EFFECTIVE outstanding "
+            f"(not sanctioned). At {data['as_of_date']}: "
+            f"{_inr(isum['Bucket1_Interest'])} / {_inr(b1_os)} = "
+            f"{isum['Weighted_Avg_Cost']*100:.2f}%. "
+            f"Effective O/S is below sanctioned because working-capital lines run partially drawn "
+            f"and undrawn TLs (e.g., RBL ₹200 Cr) contribute zero outstanding.")
 
 
 def answer_most_expensive(data: Dict[str, Any]) -> str:
@@ -145,8 +151,14 @@ def answer_repayment_timeline(data: Dict[str, Any]) -> str:
     
     peak = fy_agg.loc[fy_agg["Principal"].idxmax()]
     
+    # Build TL sanctioned breakdown dynamically
+    fm = data["facility_master"]
+    tl = fm[fm["Category"] == "FB-Term"].groupby("Lender")["Sanction_INR"].sum()
+    tl_total = tl.sum()
+    tl_breakdown = " + ".join([f"{l} ₹{v:.1f}" for l, v in tl.sort_values(ascending=False).items()])
+    
     out = [f"**📅 Term Loan Repayment Timeline**\n"]
-    out.append(f"- Total TL Sanctioned: **₹670.7 Cr** (RBL ₹200 + YBL ₹320.7 + Bajaj ₹150)")
+    out.append(f"- Total TL Sanctioned: **₹{tl_total:.1f} Cr** ({tl_breakdown})")
     out.append(f"- Repayment span: {fy_agg['FY_Label'].iloc[0]} to {fy_agg['FY_Label'].iloc[-1]}")
     out.append(f"- **Peak repayment year: {peak['FY_Label']}** with "
                f"{_inr(peak['Principal'])} principal + {_inr(peak['Interest'])} interest = "
@@ -165,13 +177,20 @@ def answer_repayment_timeline(data: Dict[str, Any]) -> str:
 def answer_rate_shock(data: Dict[str, Any]) -> str:
     sens = data["rate_sensitivity"]
     isum = data["interest_summary"]
+    fm = data["facility_master"]
     total_delta = sens["Delta_Interest_100bps"].sum() if len(sens) > 0 else 0
+    # WAC denominator: Bucket 1 effective outstanding (NOT sanctioned debt)
+    b1_os = fm[(fm["Bucket"] == 1) &
+               (fm["Category"].isin(["FB", "FB-Term", "FB-FCY"]))]["Effective_OS"].sum()
+    new_wac_pct = ((isum["Bucket1_Interest"] + total_delta) / b1_os * 100) if b1_os > 0 else 0
     
     out = [f"**📈 Impact of +100 bps Rate Shock**\n"]
     out.append(f"- Current Bucket 1 Interest: {_inr(isum['Bucket1_Interest'])}")
     out.append(f"- **Additional cost from +100 bps: {_inr(total_delta)}**")
     out.append(f"- Stressed Annual Interest: {_inr(isum['Bucket1_Interest'] + total_delta)}")
-    out.append(f"- New WAC: {((isum['Bucket1_Interest'] + total_delta) / data['totals']['Bucket1_Sanctioned_Debt'] * 100):.2f}%")
+    out.append(f"- New WAC: **{new_wac_pct:.2f}%** "
+               f"(vs current {isum['Weighted_Avg_Cost']*100:.2f}% — "
+               f"+{(new_wac_pct - isum['Weighted_Avg_Cost']*100)*100:.0f} bps)")
     
     out.append("\n**Sensitivity by benchmark:**")
     out.append("| Benchmark | Δ Interest @ +100 bps |")
@@ -247,10 +266,25 @@ def answer_board_summary(data: Dict[str, Any], cov_df: pd.DataFrame) -> str:
                f"and FD-Backed {_inr(t['Bucket3_Separate'])} (separate line).")
     out.append(f"2. **Annual Cost**: {_inr(isum['Total_Interest_Commission'])} "
                f"at WAC {isum['Weighted_Avg_Cost']*100:.2f}% on sanctioned debt.")
+    # Compute TL sanctioned and outstanding dynamically from data
+    fm = data["facility_master"]
+    tl_facilities = fm[fm["Category"] == "FB-Term"]
+    tl_sanc_total = tl_facilities["Sanction_INR"].sum()
+    tl_os_total = tl_facilities["Effective_OS"].sum()
+    tl_lenders = ", ".join(sorted(tl_facilities["Lender"].unique()))
+    # Maturity span
+    maturities = tl_facilities[tl_facilities["Maturity_Date"].notna()]["Maturity_Date"]
+    if len(maturities):
+        early_fy = maturities.min().year + (1 if maturities.min().month >= 4 else 0)
+        late_fy = maturities.max().year + (1 if maturities.max().month >= 4 else 0)
+        mat_span = f"FY{early_fy % 100:02d}-FY{late_fy % 100:02d}"
+    else:
+        mat_span = "—"
+    
     out.append(f"3. **Covenants**: {compliant}/{len(cov_df)} compliant. "
                f"{breach} breach, {near} near or watch.")
-    out.append(f"4. **Term Loans**: ₹670.7 Cr sanctioned across RBL/YBL/Bajaj. "
-               f"Maturities span FY29-FY37. Outstanding ~₹446 Cr.")
+    out.append(f"4. **Term Loans**: {_inr(tl_sanc_total)} sanctioned across {tl_lenders}. "
+               f"Maturities span {mat_span}. Outstanding {_inr(tl_os_total)}.")
     out.append(f"5. **Top Concentration**: {top['Lender']} at "
                f"{top['Bucket1_Total_Debt']/t['Bucket1_Sanctioned_Debt']*100:.1f}% "
                f"({_inr(top['Bucket1_Total_Debt'])}).")

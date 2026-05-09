@@ -144,14 +144,13 @@ def generate_board_memo(data: Dict[str, Any], cov_df: pd.DataFrame,
         narrative = f"<b>{breach} covenant(s) breached.</b> Lender dialogue required immediately."
     elif near > 0:
         verdict, vcolor = "MONITOR CLOSELY", WARN
-        narrative = (f"Banking exposure of <b>{_inr(data['totals']['Total_Banking_Exposure'])}</b> "
+        narrative = (f"Sanctioned debt of <b>{_inr(data['totals']['Bucket1_Sanctioned_Debt'])}</b> "
                      f"is healthy. <b>{near} covenant(s)</b> are near threshold and require monitoring.")
     else:
         verdict, vcolor = "HEALTHY", GOOD
-        narrative = (f"Banking exposure of <b>{_inr(data['totals']['Total_Banking_Exposure'])}</b> "
-                     f"across 5 lenders. Sanctioned Debt {_inr(data['totals']['Bucket1_Sanctioned_Debt'])}, "
-                     f"NFB {_inr(data['totals']['Bucket2_NFB_Contingent'])}, "
-                     f"Separate {_inr(data['totals']['Bucket3_Separate'])}. "
+        narrative = (f"Sanctioned debt of <b>{_inr(data['totals']['Bucket1_Sanctioned_Debt'])}</b> "
+                     f"across 5 lenders. NFB Contingent {_inr(data['totals']['Bucket2_NFB_Contingent'])}, "
+                     f"FD-Backed {_inr(data['totals']['Bucket3_Separate'])}. "
                      f"All <b>{len(cov_df)} covenants compliant</b>.")
     
     badge_table = Table(
@@ -178,8 +177,8 @@ def generate_board_memo(data: Dict[str, Any], cov_df: pd.DataFrame,
     t = data["totals"]
     
     kpi_cells = [
-        _kpi_cell("Banking Exposure", _inr(t["Total_Banking_Exposure"]), ACCENT),
         _kpi_cell("Sanctioned Debt", _inr(t["Bucket1_Sanctioned_Debt"]), PRIMARY),
+        _kpi_cell("NFB Contingent", _inr(t["Bucket2_NFB_Contingent"]), ACCENT),
         _kpi_cell("Annual Cost", _inr(isum["Total_Interest_Commission"]), WARN),
         _kpi_cell("Weighted Avg Cost", _pct(isum["Weighted_Avg_Cost"]), GOOD),
     ]
@@ -198,21 +197,23 @@ def generate_board_memo(data: Dict[str, Any], cov_df: pd.DataFrame,
     # ─── THREE-BUCKET STRUCTURE ─────────────────────────────────────
     story.append(Paragraph("Three-Bucket Exposure Structure", s["SectionHeader"]))
     
+    sd = t["Bucket1_Sanctioned_Debt"] or 1.0
     bucket_data = [
-        ["Bucket", "Description", "Amount (Rs. Cr)", "% of Banking"],
-        ["Bucket 1", "Sanctioned Debt (TL + WC FB on cap basis)",
-         f"{t['Bucket1_Sanctioned_Debt']:,.1f}",
-         f"{t['Bucket1_Sanctioned_Debt']/t['Total_Banking_Exposure']*100:.1f}%"],
-        ["Bucket 2", "NFB Contingent (LCs, SBLCs - parent only)",
-         f"{t['Bucket2_NFB_Contingent']:,.1f}",
-         f"{t['Bucket2_NFB_Contingent']/t['Total_Banking_Exposure']*100:.1f}%"],
-        ["Bucket 3", "Separate Lines (FD-Backed + Hedge)",
-         f"{t['Bucket3_Separate']:,.1f}",
-         f"{t['Bucket3_Separate']/t['Total_Banking_Exposure']*100:.1f}%"],
-        ["TOTAL", "Banking Exposure",
-         f"{t['Total_Banking_Exposure']:,.1f}", "100.0%"],
+        ["Bucket", "Description", "Amount (Rs. Cr)", "% of Sanctioned"],
+        ["Bucket 1 (FB)", "Fund-Based Mains (TL + WC FB parents)",
+         f"{data['facility_master'][data['facility_master']['Bucket']==1]['Sanction_INR'].sum():,.1f}",
+         f"{data['facility_master'][data['facility_master']['Bucket']==1]['Sanction_INR'].sum()/sd*100:.1f}%"],
+        ["Bucket 2 (NFB)", "Non-Fund-Based Mains (LC umbrellas)",
+         f"{data['facility_master'][data['facility_master']['Bucket']==2]['Sanction_INR'].sum():,.1f}",
+         f"{data['facility_master'][data['facility_master']['Bucket']==2]['Sanction_INR'].sum()/sd*100:.1f}%"],
+        ["TOTAL", "Sanctioned Debt (B1 + B2)",
+         f"{t['Bucket1_Sanctioned_Debt']:,.1f}", "100.0%"],
+        ["Memo", "NFB Contingent (B2 + sub-of-FB, off-B/S face)",
+         f"{t['Bucket2_NFB_Contingent']:,.1f}", "—"],
+        ["Memo", "FD-Backed Separate Line (Bucket 3)",
+         f"{t['Bucket3_Separate']:,.1f}", "—"],
     ]
-    bt = Table(bucket_data, colWidths=[2.2*cm, 7.6*cm, 3.5*cm, 3.5*cm])
+    bt = Table(bucket_data, colWidths=[2.6*cm, 7.4*cm, 3.4*cm, 3.4*cm])
     bt.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PRIMARY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -234,17 +235,18 @@ def generate_board_memo(data: Dict[str, Any], cov_df: pd.DataFrame,
     story.append(Spacer(1, 0.3*cm))
     
     # ─── LENDER CONCENTRATION ───────────────────────────────────────
-    story.append(Paragraph("Lender Concentration", s["SectionHeader"]))
-    conc = data["lender_concentration"].sort_values("Total_Banking_Exposure", ascending=False)
-    conc_data = [["Lender", "Banking Exposure (Rs. Cr)", "% of Sanc Debt", "% of Banking"]]
-    for _, r in conc.iterrows():
+    story.append(Paragraph("Lender Concentration (by Sanctioned Debt)", s["SectionHeader"]))
+    b1_pdf = data["lender_bucket1"]
+    b1_pdf = b1_pdf[b1_pdf["Lender"] != "Grand Total"].sort_values("Bucket1_Total_Debt", ascending=False)
+    sd_total_pdf = t["Bucket1_Sanctioned_Debt"] or 1.0
+    conc_data = [["Lender", "Sanctioned Debt (Rs. Cr)", "% of Sanctioned"]]
+    for _, r in b1_pdf.iterrows():
         conc_data.append([
             r["Lender"],
-            f"{r['Total_Banking_Exposure']:,.1f}",
-            f"{r['Pct_Sanctioned_Debt']*100:.1f}%",
-            f"{r['Pct_Banking_Exposure']*100:.1f}%",
+            f"{r['Bucket1_Total_Debt']:,.1f}",
+            f"{r['Bucket1_Total_Debt']/sd_total_pdf*100:.1f}%",
         ])
-    conc_table = Table(conc_data, colWidths=[5*cm, 4*cm, 3.4*cm, 3.4*cm])
+    conc_table = Table(conc_data, colWidths=[5.5*cm, 5.5*cm, 4.8*cm])
     conc_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PRIMARY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -261,13 +263,13 @@ def generate_board_memo(data: Dict[str, Any], cov_df: pd.DataFrame,
     ]))
     story.append(conc_table)
     
-    top = conc.iloc[0]
-    top_pct = top["Total_Banking_Exposure"] / t["Total_Banking_Exposure"] * 100
+    top = b1_pdf.iloc[0]
+    top_pct = top["Bucket1_Total_Debt"] / sd_total_pdf * 100
     if top_pct > 40:
         story.append(Spacer(1, 0.2*cm))
         story.append(Paragraph(
             f"<font color='#F59E0B'><b>Note:</b></font> {top['Lender']} represents "
-            f"{top_pct:.1f}% of total banking exposure, exceeding the 40% diversification threshold.",
+            f"{top_pct:.1f}% of sanctioned debt, exceeding the 40% diversification threshold.",
             s["BodyText2"]))
     
     story.append(Spacer(1, 0.4*cm))

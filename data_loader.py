@@ -223,9 +223,9 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
             "Category": str(r["Category"]),
             "Nature": str(r["Nature"]),
             "Sub_Limit_Flag": bool(r["Sub-Limit Flag"]) if pd.notna(r["Sub-Limit Flag"]) else False,
-            # WC Cap Group / Amount removed in new model — preserve schema with None
-            "WC_Cap_Group": str(_fm_get(r, "WC Cap Group")) if _fm_get(r, "WC Cap Group") is not None else None,
-            "WC_Cap_Amount": float(_fm_get(r, "WC Cap Amount")) if _fm_get(r, "WC Cap Amount") is not None else None,
+            # WC Cap Group / Amount removed in V19 model — always None
+            "WC_Cap_Group": None,
+            "WC_Cap_Amount": None,
             "FD_Backed": bool(r["FD-Backed"]) if pd.notna(r["FD-Backed"]) else False,
             # New flag for NFB Contingent classification (RBL SBLC for BC, RBL Capex LC)
             "NFB_Contingent_Flag": bool(_fm_get(r, "NFB Contingent Flag", default=False)),
@@ -396,39 +396,28 @@ def load_excel(signature: str, path_str: str) -> Dict[str, Any]:
     out["lender_bucket3"] = pd.DataFrame(bucket3_records)
 
     # ─── Lender Concentration (computed — not present in new Excel layout) ───
-    # OLD keys: Lender, Total_Banking_Exposure, Pct_Sanctioned_Debt, Pct_Banking_Exposure
-    # Definition: Total Banking Exposure = Sanctioned Debt + NFB Contingent + FD-Backed
-    # (Mirrors the doughnut composition: 1320.7 + 815 + 100 = 2235.7)
+    # Provides per-lender Sanctioned Debt for the donut chart.
+    # NOTE: 'Banking Exposure' concept (B1+B2+B3 sum = ₹2,235.7) was removed from the
+    # dashboard at user request. This DataFrame retains only Sanctioned Debt fields.
     sanc_total = sum(b["Sanctioned_Debt"] for b in bucket1_data.values()) or 1.0
-    be_per_lender = {}
-    for lender in bucket1_data:
-        sanc = bucket1_data[lender]["Sanctioned_Debt"]
-        nfb_cont = nfb_data.get(lender, {}).get("Total_NFB_Contingent", 0.0)
-        fd = fd_data.get(lender, {}).get("FD_Backed", 0.0)
-        be_per_lender[lender] = sanc + nfb_cont + fd
-    be_total = sum(be_per_lender.values()) or 1.0
-
     concentration_records = []
-    for lender, be in be_per_lender.items():
+    for lender in bucket1_data:
         concentration_records.append({
             "Lender": lender,
-            "Total_Banking_Exposure": be,
+            "Sanctioned_Debt": bucket1_data[lender]["Sanctioned_Debt"],
             "Pct_Sanctioned_Debt": bucket1_data[lender]["Sanctioned_Debt"] / sanc_total,
-            "Pct_Banking_Exposure": be / be_total,
         })
     out["lender_concentration"] = pd.DataFrame(concentration_records)
 
     # ─── Headline totals ────────────────────────────────────
-    # OLD keys preserved. In the new model:
+    # In the new model:
     #   Bucket1_Sanctioned_Debt → Sanctioned Debt KPI = B1 + B2 = ₹1,320.7 (row 9 col 3)
     #   Bucket2_NFB_Contingent  → NFB Contingent total = ₹815 (row 19 col 3)
     #   Bucket3_Separate        → FD-Backed total = ₹100 (row 29 col 1)
-    #   Total_Banking_Exposure  → sum of all three = ₹2,235.7 (matches PPT doughnut)
     out["totals"] = {
         "Bucket1_Sanctioned_Debt": _safe_float(ls_raw.iloc[9, 3], default=sum(b["Sanctioned_Debt"] for b in bucket1_data.values())),
         "Bucket2_NFB_Contingent": _safe_float(ls_raw.iloc[19, 3], default=sum(n["Total_NFB_Contingent"] for n in nfb_data.values())),
         "Bucket3_Separate": _safe_float(ls_raw.iloc[29, 1], default=sum(f["FD_Backed"] for f in fd_data.values())),
-        "Total_Banking_Exposure": be_total,
     }
 
     # ─── Interest Schedule ─────────────────────────────────

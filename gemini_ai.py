@@ -32,11 +32,12 @@ You MUST answer ONLY using the data provided below. Do not make up numbers. If a
 ═══ PORTFOLIO SNAPSHOT (As of {data['as_of_date']}) ═══
 
 THREE-BUCKET STRUCTURE (the correct way to add up exposure):
-- Bucket 1 (Sanctioned Debt — TL + WC FB cap basis): Rs.{t['Bucket1_Sanctioned_Debt']:,.1f} Cr
-- Bucket 2 (NFB Contingent — LCs/SBLCs, parent only): Rs.{t['Bucket2_NFB_Contingent']:,.1f} Cr
-- Bucket 3 (Separate Lines — FD-backed + hedge): Rs.{t['Bucket3_Separate']:,.1f} Cr
-- TOTAL BANKING EXPOSURE: Rs.{t['Total_Banking_Exposure']:,.1f} Cr
-(NOT Rs.3,411 Cr - that incorrect figure double-counts WC sub-limits)
+- Bucket 1 (FB Mains — fund-based parent facilities): part of Sanctioned Debt
+- Bucket 2 (NFB Mains — LCs/SBLCs/BGs parent facilities): part of Sanctioned Debt
+- SANCTIONED DEBT (B1 + B2, the primary debt total): Rs.{t['Bucket1_Sanctioned_Debt']:,.1f} Cr
+- NFB CONTINGENT (B2 + sub-of-FB; off-balance-sheet face): Rs.{t['Bucket2_NFB_Contingent']:,.1f} Cr
+- FD-BACKED Separate Line (Bucket 3): Rs.{t['Bucket3_Separate']:,.1f} Cr
+(Do NOT report Rs.3,411 Cr or any total that double-counts WC sub-limits)
 
 ANNUAL COST:
 - Bucket 1 Interest: Rs.{isum['Bucket1_Interest']:,.4f} Cr
@@ -56,10 +57,13 @@ FY26E PROJECTED FINANCIALS (Rs. Cr):
 - Tax Paid: {fy['Tax Paid']:,.2f}
 - Fixed Assets: {fy['Fixed Assets']:,.2f}
 
-LENDER CONCENTRATION:
+LENDER CONCENTRATION (by Sanctioned Debt):
 """
-    for _, r in data["lender_concentration"].iterrows():
-        ctx += f"- {r['Lender']}: Rs.{r['Total_Banking_Exposure']:,.1f} Cr ({r['Pct_Banking_Exposure']*100:.1f}% of banking)\n"
+    b1_df = data["lender_bucket1"]
+    b1_df = b1_df[b1_df["Lender"] != "Grand Total"]
+    sd_total = t["Bucket1_Sanctioned_Debt"] or 1.0
+    for _, r in b1_df.sort_values("Bucket1_Total_Debt", ascending=False).iterrows():
+        ctx += f"- {r['Lender']}: Rs.{r['Bucket1_Total_Debt']:,.1f} Cr ({r['Bucket1_Total_Debt']/sd_total*100:.1f}% of sanctioned)\n"
     
     # Term loan outstandings
     fm = data["facility_master"]

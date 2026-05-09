@@ -59,9 +59,10 @@ Expected output: **46/46 PASSED** across 10 phases.
 
 - All 34 facilities load correctly
 - All 24 covenants match Excel thresholds and actuals
-- Three-bucket totals: B1 ₹1,317.7 + B2 ₹865 + B3 ₹123 = Banking ₹2,305.7
-- Annual interest+commission = ₹105.64 Cr
-- WAC = 7.5154%
+- Three-bucket totals: B1 ₹720.7 + B2 ₹600 = Sanctioned Debt ₹1,320.7
+- NFB Contingent ₹815 (off-B/S) | FD-Backed ₹100 (separate line)
+- Annual interest+commission = ₹49.04 Cr
+- WAC = 8.08%
 - 10 AI questions all return valid answers
 - 4 proactive insight cards generate
 - Lender heatmap excludes sub-limits
@@ -97,17 +98,18 @@ Expected output: **46/46 PASSED** across 10 phases.
 
 Both methods invalidate the cache and rebuild everything from the new Excel.
 
-## Health Check Numbers (Apr-2026 baseline)
+## Health Check Numbers (May-2026 baseline)
 
 If you see different values, the Excel has been edited:
 
-- Total Banking Exposure: **₹2,305.7 Cr**
-- Sanctioned Debt: **₹1,317.7 Cr** | NFB: **₹865 Cr** | Separate: **₹123 Cr**
-- Annual Interest+Commission: **₹105.64 Cr**
-- Weighted Avg Cost: **7.5154%**
+- Sanctioned Debt: **₹1,320.7 Cr** (B1 FB ₹720.7 + B2 NFB ₹600)
+- NFB Contingent: **₹815 Cr** (off-balance-sheet face)
+- FD-Backed Separate: **₹100 Cr** (RBL FDOD only)
+- Annual Interest+Commission: **₹49.04 Cr**
+- Weighted Avg Cost: **8.08%**
 - All 24 covenants: **Compliant**
 - DSCR: **3.49x** | ICR: **7.82x** | Total Debt/EBITDA: **1.60x**
-- Top lender: **RBL Bank at 43.7%** of banking exposure
+- Top lender: **YES Bank at 39.4%** of sanctioned debt
 
 ---
 

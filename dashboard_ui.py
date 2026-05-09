@@ -260,18 +260,19 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
         narrative = f"<b>{breach} covenant(s) currently breached.</b> Lender dialogue required."
     elif near > 0:
         verdict, color = "MONITOR CLOSELY", "#F59E0B"
-        narrative = (f"Banking exposure of <b>{inr(t['Total_Banking_Exposure'])}</b> healthy with "
+        narrative = (f"Sanctioned debt of <b>{inr(t['Bucket1_Sanctioned_Debt'])}</b> with "
                      f"<b>{near} covenant(s)</b> near threshold. Annual cost {inr(int_calc['Total'])}.")
     else:
         verdict, color = "HEALTHY", "#10B981"
-        narrative = (f"Banking exposure of <b>{inr(t['Total_Banking_Exposure'])}</b> across 5 lenders. "
-                     f"Sanctioned Debt {inr(t['Bucket1_Sanctioned_Debt'])}, NFB {inr(t['Bucket2_NFB_Contingent'])}, "
-                     f"Separate {inr(t['Bucket3_Separate'])}. All <b>{len(cov_df)} covenants compliant</b>.")
+        narrative = (f"Sanctioned debt of <b>{inr(t['Bucket1_Sanctioned_Debt'])}</b> across 5 lenders. "
+                     f"NFB Contingent {inr(t['Bucket2_NFB_Contingent'])}, FD-Backed {inr(t['Bucket3_Separate'])}. "
+                     f"Annual cost <b>{inr(int_calc['Total'])}</b> at WAC <b>{int_calc['Weighted_Avg_Cost']*100:.2f}%</b>. "
+                     f"All <b>{len(cov_df)} covenants compliant</b>.")
     render_hero(verdict, color, narrative)
     
     # Three-bucket KPIs
     render_tab_header("AT A GLANCE", "Three-Bucket View",
-                       "Sanctioned Debt is the primary debt total. Banking Exposure includes contingent NFB and FD-backed lines.")
+                       "Sanctioned Debt is the primary debt total. NFB Contingent and FD-Backed lines are tracked separately.")
     # Decompose Sanctioned Debt into FB Mains (Bucket 1) and NFB Mains (Bucket 2 parents)
     # for an accurate, self-updating subtitle.
     fm_for_kpi = data["facility_master"]
@@ -294,8 +295,8 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
                         "Bucket 3 · FD-Backed only (RBL FDOD)",
                         color="#06B6D4")
     with c4:
-        render_big_kpi("Banking Exposure", inr(t["Total_Banking_Exposure"]),
-                        f"All buckets · {total_facility_count} facilities",
+        render_big_kpi("Annual Cost", inr(int_calc["Total"]),
+                        f"WAC {int_calc['Weighted_Avg_Cost']*100:.2f}% · {total_facility_count} facilities",
                         color="#F59E0B")
     
     # Health KPIs
@@ -317,43 +318,46 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
                         "All clear" if breach + near + watch == 0 else f"{breach} breach · {near} near · {watch} watch",
                         color=status_color)
     with c4:
-        top = conc.loc[conc["Total_Banking_Exposure"].idxmax()]
-        top_pct = top["Total_Banking_Exposure"] / t["Total_Banking_Exposure"] * 100
-        render_big_kpi("Top Lender", f"{top_pct:.1f}%", top["Lender"],
+        # Use Sanctioned Debt for "Top Lender" — most meaningful for credit risk
+        b1_df = data["lender_bucket1"]
+        top_row = b1_df.loc[b1_df["Bucket1_Total_Debt"].idxmax()]
+        top_pct = top_row["Bucket1_Total_Debt"] / t["Bucket1_Sanctioned_Debt"] * 100
+        render_big_kpi("Top Lender", f"{top_pct:.1f}%", top_row["Lender"],
                         color="#F59E0B" if top_pct > 40 else "#10B981")
     
     # Concentration donut + breakdown
     render_tab_header("STRUCTURE", "Lender Concentration",
-                       "By Total Banking Exposure (₹ Cr). Hover for details.")
+                       "By Sanctioned Debt (₹ Cr). Hover for details.")
     c1, c2 = st.columns([2, 1])
     with c1:
-        cs = conc.sort_values("Total_Banking_Exposure", ascending=False)
+        cs = b1_df.sort_values("Bucket1_Total_Debt", ascending=False)
+        cs = cs[cs["Lender"] != "Grand Total"]
         fig = go.Figure(data=[go.Pie(
-            labels=cs["Lender"], values=cs["Total_Banking_Exposure"], hole=0.6,
+            labels=cs["Lender"], values=cs["Bucket1_Total_Debt"], hole=0.6,
             marker=dict(colors=[LENDER_COLORS.get(l, "#3B82F6") for l in cs["Lender"]],
                         line=dict(color="#1E293B", width=3)),
             textinfo="label+percent", textposition="outside",
             hovertemplate="<b>%{label}</b><br>%{value:.1f} Cr<br>%{percent}<extra></extra>",
         )])
         fig.update_layout(**CHART_LAYOUT, height=420, showlegend=False,
-                           annotations=[dict(text=f"<b>{t['Total_Banking_Exposure']:,.0f}</b>"
-                                                  f"<br><span style='font-size:0.95rem;color:#94A3B8'>Cr Banking</span>",
+                           annotations=[dict(text=f"<b>{t['Bucket1_Sanctioned_Debt']:,.0f}</b>"
+                                                  f"<br><span style='font-size:0.95rem;color:#94A3B8'>Cr Sanctioned</span>",
                                               x=0.5, y=0.5, font=dict(size=24, color="#F1F5F9"),
                                               showarrow=False)])
         st.plotly_chart(fig, use_container_width=True)
     with c2:
         top = cs.iloc[0]
-        ts = top["Total_Banking_Exposure"] / t["Total_Banking_Exposure"] * 100
+        ts = top["Bucket1_Total_Debt"] / t["Bucket1_Sanctioned_Debt"] * 100
         st.markdown(_html(f"""
         <div style='padding:16px 0;'>
             <div style='font-size:0.78rem;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;'>Largest Lender</div>
             <div style='font-size:1.5rem;font-weight:700;color:#F1F5F9;'>{top['Lender']}</div>
-            <div style='color:#CBD5E1;'>{inr(top['Total_Banking_Exposure'])} <span class='mini-stat'>{ts:.1f}%</span></div>
+            <div style='color:#CBD5E1;'>{inr(top['Bucket1_Total_Debt'])} <span class='mini-stat'>{ts:.1f}%</span></div>
         </div>
         <div style='padding:16px 0;border-top:1px solid #334155;'>
             <div style='font-size:0.78rem;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;'>Sanctioned Debt</div>
             <div style='font-size:1.5rem;font-weight:700;color:#F1F5F9;'>{inr(t['Bucket1_Sanctioned_Debt'])}</div>
-            <div style='color:#CBD5E1;font-size:0.8rem;'>Primary debt total (Bucket 1)</div>
+            <div style='color:#CBD5E1;font-size:0.8rem;'>FB Mains + NFB Mains across all 5 lenders</div>
         </div>
         <div style='padding:16px 0;border-top:1px solid #334155;'>
             <div style='font-size:0.78rem;color:#94A3B8;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;'>Diversification</div>
@@ -368,11 +372,10 @@ def render_tab_overview(data: Dict[str, Any], controls: Dict[str, Any]):
         b3 = data["lender_bucket3"]
         merged = b1.merge(b2[["Lender", "Bucket2_Total_NFB"]], on="Lender", how="outer") \
                     .merge(b3[["Lender", "Bucket3_Total"]], on="Lender", how="outer") \
-                    .merge(conc[["Lender", "Total_Banking_Exposure"]], on="Lender", how="outer") \
                     .fillna(0)
         merged = merged[merged["Lender"] != "Grand Total"]
         for col in ["TL_Sanctioned", "WC_FB_Cap", "Bucket1_Total_Debt", "Bucket2_Total_NFB",
-                     "Bucket3_Total", "Total_Banking_Exposure"]:
+                     "Bucket3_Total"]:
             if col in merged.columns:
                 merged[col] = merged[col].apply(lambda x: f"₹{x:,.1f}")
         merged.columns = [c.replace("_", " ") for c in merged.columns]
@@ -1164,7 +1167,6 @@ def render_tab_export(data: Dict[str, Any], controls: Dict[str, Any]):
 | Bucket 1 — Sanctioned Debt | {inr(data['totals']['Bucket1_Sanctioned_Debt'])} |
 | Bucket 2 — NFB Contingent | {inr(data['totals']['Bucket2_NFB_Contingent'])} |
 | Bucket 3 — Separate Lines | {inr(data['totals']['Bucket3_Separate'])} |
-| **Total Banking Exposure** | **{inr(data['totals']['Total_Banking_Exposure'])}** |
 | Annual Interest + Commission | {inr(data['interest_summary']['Total_Interest_Commission'])} |
 | Weighted Avg Cost | {data['interest_summary']['Weighted_Avg_Cost']*100:.4f}% |
 | Total Covenants | {len(cov_df)} |
@@ -1220,7 +1222,7 @@ def render_tab_snapshots(data: Dict[str, Any], controls: Dict[str, Any]):
             state = snap["state"]
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.metric("Banking Exposure", f"₹{state['Total_Banking_Exposure']:,.1f} Cr")
+                st.metric("Sanctioned Debt", f"₹{state.get('Bucket1_Sanctioned_Debt', state.get('Total_Banking_Exposure', 0)):,.1f} Cr")
             with c2:
                 st.metric("Annual Cost", f"₹{state['Annual_Interest_Comm']:,.1f} Cr")
             with c3:

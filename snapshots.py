@@ -31,7 +31,6 @@ def _extract_state(data: Dict[str, Any], cov_df: pd.DataFrame) -> Dict[str, Any]
         "Bucket1_Sanctioned_Debt": float(t["Bucket1_Sanctioned_Debt"]),
         "Bucket2_NFB_Contingent": float(t["Bucket2_NFB_Contingent"]),
         "Bucket3_Separate": float(t["Bucket3_Separate"]),
-        "Total_Banking_Exposure": float(t["Total_Banking_Exposure"]),
         
         # Cost
         "Annual_Interest_Comm": float(isum["Total_Interest_Commission"]),
@@ -65,10 +64,12 @@ def _extract_state(data: Dict[str, Any], cov_df: pd.DataFrame) -> Dict[str, Any]
         if isinstance(actual, (int, float)):
             state["covenant_actuals"][key] = float(actual)
     
-    # Per-lender exposure
+    # Per-lender exposure (by Sanctioned Debt)
     state["lender_exposure"] = {}
-    for _, r in data["lender_concentration"].iterrows():
-        state["lender_exposure"][r["Lender"]] = float(r["Total_Banking_Exposure"])
+    b1_snap = data["lender_bucket1"]
+    b1_snap = b1_snap[b1_snap["Lender"] != "Grand Total"]
+    for _, r in b1_snap.iterrows():
+        state["lender_exposure"][r["Lender"]] = float(r["Bucket1_Total_Debt"])
     
     return state
 

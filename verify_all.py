@@ -90,7 +90,7 @@ data = load_all_data()
 check("Excel loaded", data["excel_exists"])
 check("34 facilities", len(data["facility_master"]) == 34)
 check("24 covenants", len(data["covenants"]) == 24)
-check("Banking Rs.2,235.7", abs(data["totals"]["Total_Banking_Exposure"] - 2235.7) < 0.1)
+check("Sanctioned Debt 1,320.7", abs(data["totals"]["Bucket1_Sanctioned_Debt"] - 1320.7) < 0.1)
 check("WAC 8.08%", abs(data["interest_summary"]["Weighted_Avg_Cost"] - 0.0808) < 0.0005)
 
 
@@ -161,7 +161,7 @@ try:
         r = PdfReader("/tmp/_test_memo.pdf")
         check("PDF has 1+ pages", len(r.pages) >= 1)
         text = " ".join(p.extract_text() for p in r.pages)
-        check("PDF mentions Banking Exposure", "2,235" in text or "2235" in text)
+        check("PDF mentions Sanctioned Debt", "1,320" in text or "1320" in text)
         check("PDF mentions WAC", "8.07" in text or "8.08" in text)
         check("PDF mentions Compliant", "Compliant" in text)
         check("PDF mentions all lenders",
@@ -180,7 +180,7 @@ try:
     check("Snapshot 1 captured", snap1 is not None)
     check("Snapshot has all key metrics",
           all(k in snap1["state"] for k in
-              ["Total_Banking_Exposure", "EBITDA", "Compliant", "covenant_actuals"]))
+              ["Bucket1_Sanctioned_Debt", "EBITDA", "Compliant", "covenant_actuals"]))
     
     # Modify and snapshot again
     data2 = copy.deepcopy(data)
@@ -281,7 +281,8 @@ if failed == 0:
     print("Verified end-to-end:")
     print("  - All 9 module imports work")
     print("  - 34 facilities, 24 covenants load correctly")
-    print("  - Banking Exposure Rs.2,235.7 Cr (Sanctioned 1,320.7 + NFB Cont. 815 + FD-Backed 100)")
+    print("  - Sanctioned Debt Rs.1,320.7 Cr (B1 FB Mains 720.7 + B2 NFB Mains 600)")
+    print("  - NFB Contingent Rs.815 Cr (off-balance-sheet) | FD-Backed Rs.100 Cr (separate)")
     print("  - WAC 8.08% (matches Excel exactly)")
     print("  - All 24 covenants Compliant at base case")
     print("  - AI module answers all suggested questions")

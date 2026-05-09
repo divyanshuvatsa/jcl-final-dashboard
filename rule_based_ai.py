@@ -33,10 +33,11 @@ def _pct(v: float, d: int = 2) -> str:
 
 # ─── Answer functions ────────────────────────────────────────────────────
 def answer_biggest_risk(data: Dict[str, Any], cov_df: pd.DataFrame) -> str:
-    conc = data["lender_concentration"]
-    total_be = data["totals"]["Total_Banking_Exposure"]
-    top = conc.loc[conc["Total_Banking_Exposure"].idxmax()]
-    top_share = top["Total_Banking_Exposure"] / total_be * 100
+    b1 = data["lender_bucket1"]
+    b1_lender = b1[b1["Lender"] != "Grand Total"]
+    total_sd = data["totals"]["Bucket1_Sanctioned_Debt"]
+    top = b1_lender.loc[b1_lender["Bucket1_Total_Debt"].idxmax()]
+    top_share = top["Bucket1_Total_Debt"] / total_sd * 100
     
     # Tightest covenant
     ratio_cov = cov_df[cov_df["Operator"] != "rating"].copy()
@@ -46,8 +47,8 @@ def answer_biggest_risk(data: Dict[str, Any], cov_df: pd.DataFrame) -> str:
     out = ["**🎯 Biggest Risks**\n"]
     if top_share > 40:
         out.append(f"1. **Lender Concentration** — {top['Lender']} holds "
-                   f"**{top_share:.1f}%** ({_inr(top['Total_Banking_Exposure'])}) "
-                   f"of total banking exposure of {_inr(total_be)}. "
+                   f"**{top_share:.1f}%** ({_inr(top['Bucket1_Total_Debt'])}) "
+                   f"of sanctioned debt of {_inr(total_sd)}. "
                    f"Diversification recommended in next refinancing cycle.")
     if tight is not None and pd.notna(tight["hr_pct_num"]) and tight["hr_pct_num"] < 25:
         out.append(f"2. **Tightest Covenant** — {tight['Lender']} {tight['Covenant']} "
@@ -181,21 +182,22 @@ def answer_rate_shock(data: Dict[str, Any]) -> str:
 
 
 def answer_concentration(data: Dict[str, Any]) -> str:
-    conc = data["lender_concentration"]
-    total = data["totals"]["Total_Banking_Exposure"]
+    b1 = data["lender_bucket1"]
+    b1 = b1[b1["Lender"] != "Grand Total"]
+    total_sd = data["totals"]["Bucket1_Sanctioned_Debt"]
+    fm_count = len(data["facility_master"])
     
     out = [f"**🏦 Lender Concentration Analysis**\n"]
-    out.append(f"Total Banking Exposure: {_inr(total)} (across 5 lenders, 34 facilities)")
+    out.append(f"Sanctioned Debt: {_inr(total_sd)} (across 5 lenders, {fm_count} facilities)")
     out.append("")
-    out.append("| Lender | Banking Exposure | % of Sanctioned Debt | % of Banking |")
-    out.append("|--------|------------------|----------------------|--------------|")
-    for _, r in conc.sort_values("Total_Banking_Exposure", ascending=False).iterrows():
-        out.append(f"| {r['Lender']} | {_inr(r['Total_Banking_Exposure'])} | "
-                   f"{r['Pct_Sanctioned_Debt']*100:.1f}% | "
-                   f"{r['Pct_Banking_Exposure']*100:.1f}% |")
+    out.append("| Lender | Sanctioned Debt | % of Sanctioned |")
+    out.append("|--------|-----------------|-----------------|")
+    for _, r in b1.sort_values("Bucket1_Total_Debt", ascending=False).iterrows():
+        out.append(f"| {r['Lender']} | {_inr(r['Bucket1_Total_Debt'])} | "
+                   f"{r['Bucket1_Total_Debt']/total_sd*100:.1f}% |")
     
-    top = conc.loc[conc["Total_Banking_Exposure"].idxmax()]
-    top_pct = top["Total_Banking_Exposure"] / total * 100
+    top = b1.loc[b1["Bucket1_Total_Debt"].idxmax()]
+    top_pct = top["Bucket1_Total_Debt"] / total_sd * 100
     if top_pct > 40:
         out.append(f"\n⚠️ **{top['Lender']} concentration ({top_pct:.1f}%) exceeds the 40% diversification threshold.** "
                    f"Consider reducing exposure in next refinancing cycle.")
@@ -230,27 +232,28 @@ def answer_renewals(data: Dict[str, Any]) -> str:
 def answer_board_summary(data: Dict[str, Any], cov_df: pd.DataFrame) -> str:
     t = data["totals"]
     isum = data["interest_summary"]
-    conc = data["lender_concentration"]
-    top = conc.loc[conc["Total_Banking_Exposure"].idxmax()]
+    b1 = data["lender_bucket1"]
+    b1 = b1[b1["Lender"] != "Grand Total"]
+    top = b1.loc[b1["Bucket1_Total_Debt"].idxmax()]
+    fm_count = len(data["facility_master"])
     
     compliant = (cov_df["Status"] == "Compliant").sum()
     near = (cov_df["Status"].isin(["Near Breach", "Watch"])).sum()
     breach = (cov_df["Status"] == "Breach").sum()
     
     out = [f"**📋 5-Point Board Summary**\n"]
-    out.append(f"1. **Banking Exposure**: {_inr(t['Total_Banking_Exposure'])} across 5 lenders, "
-               f"34 facilities. Sanctioned Debt {_inr(t['Bucket1_Sanctioned_Debt'])} (B1), "
-               f"NFB {_inr(t['Bucket2_NFB_Contingent'])} (B2), "
-               f"Separate {_inr(t['Bucket3_Separate'])} (B3).")
+    out.append(f"1. **Sanctioned Debt**: {_inr(t['Bucket1_Sanctioned_Debt'])} across 5 lenders, "
+               f"{fm_count} facilities. Plus NFB Contingent {_inr(t['Bucket2_NFB_Contingent'])} (off-B/S) "
+               f"and FD-Backed {_inr(t['Bucket3_Separate'])} (separate line).")
     out.append(f"2. **Annual Cost**: {_inr(isum['Total_Interest_Commission'])} "
                f"at WAC {isum['Weighted_Avg_Cost']*100:.2f}% on sanctioned debt.")
     out.append(f"3. **Covenants**: {compliant}/{len(cov_df)} compliant. "
                f"{breach} breach, {near} near or watch.")
     out.append(f"4. **Term Loans**: ₹670.7 Cr sanctioned across RBL/YBL/Bajaj. "
-               f"Maturities span FY29-FY37. Outstanding ~₹620 Cr.")
+               f"Maturities span FY29-FY37. Outstanding ~₹446 Cr.")
     out.append(f"5. **Top Concentration**: {top['Lender']} at "
-               f"{top['Total_Banking_Exposure']/t['Total_Banking_Exposure']*100:.1f}% "
-               f"({_inr(top['Total_Banking_Exposure'])}).")
+               f"{top['Bucket1_Total_Debt']/t['Bucket1_Sanctioned_Debt']*100:.1f}% "
+               f"({_inr(top['Bucket1_Total_Debt'])}).")
     return "\n".join(out)
 
 
@@ -296,16 +299,17 @@ def get_proactive_insights(data: Dict[str, Any], cov_df: pd.DataFrame) -> List[D
     insights = []
     isum = data["interest_summary"]
     t = data["totals"]
-    conc = data["lender_concentration"]
+    b1 = data["lender_bucket1"]
+    b1 = b1[b1["Lender"] != "Grand Total"]
     
-    # Card 1: Concentration
-    top = conc.loc[conc["Total_Banking_Exposure"].idxmax()]
-    top_pct = top["Total_Banking_Exposure"] / t["Total_Banking_Exposure"] * 100
+    # Card 1: Concentration (by Sanctioned Debt)
+    top = b1.loc[b1["Bucket1_Total_Debt"].idxmax()]
+    top_pct = top["Bucket1_Total_Debt"] / t["Bucket1_Sanctioned_Debt"] * 100
     if top_pct > 40:
         insights.append({
             "icon": "⚠️", "level": "warning",
             "title": "Concentration Risk",
-            "body": f"<b>{top['Lender']}</b> at <b>{top_pct:.1f}%</b> of total exposure. "
+            "body": f"<b>{top['Lender']}</b> at <b>{top_pct:.1f}%</b> of sanctioned debt. "
                     f"Diversification recommended in next cycle."
         })
     else:
